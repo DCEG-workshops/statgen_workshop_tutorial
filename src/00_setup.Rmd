@@ -1,0 +1,26 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+installing necessary packages
+```{r, eval=FALSE}
+install.packages("boxr")
+install.packages("tidyverse")
+install.packages("data.table")
+install.packages("glue")
+```
+
+take a look at the $PATH
+```{bash, engine.opts='-l'}
+echo $PATH
+```
+
+Download plink 1.9 (will have plink in the container later)
+```{bash}
+mkdir -p ~/.local/bin/
+curl -o ~/.local/bin/plink.zip https://s3.amazonaws.com/plink1-assets/plink_linux_x86_64_20230116.zip
+cd ~/.local/bin/
+unzip plink.zip
+```

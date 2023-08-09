@@ -1,0 +1,192 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(glue)
+```
+
+create the analysis directory
+```{bash}
+mkdir -p ../analysis/workshop1/
+```
+
+We will set the analysis directory for this tutorial
+```{r}
+
+analysis_dir <- paste0(getwd(), "/../analysis/workshop1/")
+data_dir <- paste0(getwd(), "/../data/")
+
+```
+
+
+First we want to see what's in the data directory
+```{r}
+list.files("../data/")
+```
+
+Calculate call rates for flagging poorly called SNPs and individuals
+the penncath.lmss file shows the per variant missingness and the penncath.imiss file shows the per individual missingness
+```{bash}
+plink --bfile ../data/penncath --missing --out ../analysis/workshop1/penncath
+```
+let's look at the distribution of per variant call rates   
+```{r}
+
+variant_miss <- fread(glue(analysis_dir, "penncath.lmiss"))
+
+variant_miss %>% ggplot( aes(x = F_MISS)) + 
+  geom_histogram() + 
+  labs(title = "Variant Missing Rate") + 
+  theme_classic()
+
+```
+
+If we want to filter out the variants with missing rate >0.01, how many are there?
+```{r}
+
+variant_miss %>% mutate(missing_rate_gt0.01 = if_else(F_MISS > 0.01, "Yes", "No")) %>% 
+                 group_by(missing_rate_gt0.01) %>%
+                 tally()
+
+```
+
+We will use plink to filter out the 291750 SNPs and 
+```{bash}
+
+plink --bfile ../data/penncath --geno 0.01 --make-bed --out ../analysis/workshop1/penncath.geno0.01
+
+```
+
+After removing the 291750 SNPs, we will recalculate the missing rate for the samples
+```{bash}
+
+plink --bfile ../analysis/workshop1/penncath.geno0.01 --missing --out ../analysis/workshop1/penncath.geno0.01
+
+```
+
+take a look at per sample missing rate
+```{r}
+
+sample_miss <- fread(glue(analysis_dir, "penncath.geno0.01.imiss"))
+sample_miss %>% mutate(missing_rate_gt0.01 = if_else(F_MISS > 0.01, "Yes", "No")) %>% 
+                 group_by(missing_rate_gt0.01) %>%
+                 tally()
+
+```
+
+we will remove the 21 samples with >0.01 missing rate
+```{bash}
+
+plink --bfile ../analysis/workshop1/penncath.geno0.01 --mind 0.01 --make-bed --out ../analysis/workshop1/penncath.geno0.01.mind0.01
+
+```
+
+Next, we look at the HWE statistics
+```{bash}
+
+plink --bfile ../analysis/workshop1/penncath.geno0.01.mind0.01 --hardy --out ../analysis/workshop1/penncath.geno0.01.mind0.01
+
+```
+
+Examine HWE statistics
+```{r}
+
+hwe_stat <- fread(glue(analysis_dir, "penncath.geno0.01.mind0.01.hwe"))
+
+
+hwe_stat %>% ggplot( aes(x = P)) + 
+  geom_histogram() + 
+  labs(title = "Hardy-Weinberg equilibrium exact test p-values") + 
+  theme_classic()
+
+```
+
+How many markers are with P<1e-8?
+TODO: what threshold to use????
+```{r}
+
+hwe_stat %>% mutate(hwe_stat_lessThan1e_8 = if_else(P < 1e-8, TRUE, FALSE)) %>% 
+                 group_by(hwe_stat_lessThan1e_8) %>%
+                 tally()
+
+```
+
+LD pruning 
+```{bash}
+
+plink --bfile ../analysis/workshop1/penncath.geno0.01.mind0.01 --indep-pairwise 50 5 0.3 --out ../analysis/workshop1/penncath.geno0.01.mind0.01
+
+```
+
+
+Relatedness check
+```{bash}
+plink --bfile ../analysis/workshop1/penncath.geno0.01.mind0.01 --extract ../analysis/workshop1/penncath.geno0.01.mind0.01.prune.in --genome --min 0.05 --out ../analysis/workshop1/penncath.geno0.01.mind0.01.LD0.3
+```
+
+Check pairs of samples with PI_HAT>0.05, maximum PI_HAT is 0.1745, no duplicates nor first degree relatives
+TODO: do we want to remove any samples? 
+```{r}
+
+ibd <- fread(glue(analysis_dir, "penncath.geno0.01.mind0.01.LD0.3.genome"))
+summary(ibd$PI_HAT)
+
+```
+
+
+run Heterozygocity
+```{bash}
+
+plink --bfile ../analysis/workshop1/penncath.geno0.01.mind0.01 --het --extract ../analysis/workshop1/penncath.geno0.01.mind0.01.prune.in --out ../analysis/workshop1/penncath.geno0.01.mind0.01.LD0.3
+
+```
+
+
+look at the heterozygocity of individuals, find individuals with heterozygocity +- 3 s.d.
+TODO: remove any one?
+```{r}
+
+heterozygocity <- fread(glue(analysis_dir, "penncath.geno0.01.mind0.01.LD0.3.het"))
+
+heterozygocity %>% mutate (het_rate = (`N(NM)` - `O(HOM)`) / `N(NM)` ) %>%
+                   ggplot( aes(x = het_rate)) + 
+                   geom_histogram() + 
+                   labs(title = "Heterozygocity") + 
+                   theme_classic()
+
+heterozygocity %>% mutate (het_rate = (`N(NM)` - `O(HOM)`) / `N(NM)` ) %>%
+                   filter (het_rate < mean(het_rate)-3*sd(het_rate) | 
+                          het_rate > mean(het_rate)+3*sd(het_rate))
+
+
+
+```
+
+use plink for simple pca
+TODO: project onto 1000 genomes
+```{bash}
+
+plink --bfile ../analysis/workshop1/penncath.geno0.01.mind0.01  --extract ../analysis/workshop1/penncath.geno0.01.mind0.01.prune.in --pca  --out ../analysis/workshop1/penncath.geno0.01.mind0.01.LD0.3
+
+```
+
+plot PCA
+```{r}
+
+pca <- fread(glue(analysis_dir, "penncath.geno0.01.mind0.01.LD0.3.eigenvec"))
+
+pca %>% rename (PC1 = V3, PC2 = V4) %>%
+        ggplot(aes(x = PC1, y = PC2)) + 
+        geom_point() + 
+        labs(title = "PC1 vs. PC2") + theme_classic()
+
+
+```
