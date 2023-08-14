@@ -1,6 +1,8 @@
 ---
 title: "R Notebook"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
@@ -174,7 +176,7 @@ use plink for simple pca
 TODO: project onto 1000 genomes
 ```{bash}
 
-plink --bfile ../analysis/workshop1/penncath.geno0.01.mind0.01  --extract ../analysis/workshop1/penncath.geno0.01.mind0.01.prune.in --pca  --out ../analysis/workshop1/penncath.geno0.01.mind0.01.LD0.3
+plink --bfile ../analysis/workshop1/penncath.geno0.01.mind0.01  --extract ../analysis/workshop1/penncath.geno0.01.mind0.01.prune.in --maf 0.05 --pca  --out ../analysis/workshop1/penncath.geno0.01.mind0.01.LD0.3
 
 ```
 
@@ -187,6 +189,12 @@ pca %>% rename (PC1 = V3, PC2 = V4) %>%
         ggplot(aes(x = PC1, y = PC2)) + 
         geom_point() + 
         labs(title = "PC1 vs. PC2") + theme_classic()
+
+
+pca %>% rename (PC2 = V4, PC3 = V5) %>%
+        ggplot(aes(x = PC2, y = PC3)) + 
+        geom_point() + 
+        labs(title = "PC2 vs. PC3") + theme_classic()
 
 
 ```
