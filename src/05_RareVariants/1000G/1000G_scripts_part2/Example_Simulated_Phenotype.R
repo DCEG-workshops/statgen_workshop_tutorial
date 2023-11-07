@@ -15,7 +15,7 @@ library(STAAR)
 library(STAARpipeline)
 
 ## set directories
-input_dir <- "/content/drive/MyDrive/session05_Rare_variants/"
+input_dir <- "/content/drive/MyDrive/statgen_workshop/data/workshop5/"
 analysis_dir <- "/content/analysis_dir05/"  
 
 ## gds file

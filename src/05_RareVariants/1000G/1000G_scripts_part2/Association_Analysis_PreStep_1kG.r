@@ -6,7 +6,7 @@ gc()
 ###############################################
 
 ## 1000G
-dir.geno <- "/content/drive/MyDrive/session05_Rare_variants/1000G_data/aGDS/"
+dir.geno <- "/content/drive/MyDrive/statgen_workshop/data/workshop5/1000G_data/aGDS/"
 adgs_file_name_1 <- "1kGP_high_coverage_Illumina.chr"
 agds_file_name_2 <- ".filtered.SNV_INDEL_SV_phased_panel.gds"
 QC_label <- "annotation/info/QC_label"

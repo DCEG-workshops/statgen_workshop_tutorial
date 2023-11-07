@@ -15,7 +15,7 @@ library(STAARpipeline)
 library(STAARpipelineSummary)
 
 ## set directories
-input_dir <- "/content/drive/MyDrive/session05_Rare_variants/"
+input_dir <- "/content/drive/MyDrive/statgen_workshop/data/workshop5/"
 analysis_dir <- "/content/analysis_dir05/" 
 
 ## gds file
@@ -46,7 +46,7 @@ Annotation_name_info <- c("rs_num","GENCODE.Category","GENCODE.Info","GENCODE.EX
           "aPC.Conservation","aPC.LocalDiversity","aPC.Mappability","aPC.TF","aPC.Protein")
 
 ## known loci: rs7412 (APOE), rs429358 (APOE), rs35136575 (APOE), rs12151108 (LDLR), rs688 (LDLR), rs6511720 (LDLR)
-known_loci <- get(load(paste0(input_dir, "Reproducible_files/known_loci_info.Rdata")))
+known_loci <- get(load(paste0(input_dir, "reference_data/known_loci_info.Rdata")))
 
 
 ##########################################
