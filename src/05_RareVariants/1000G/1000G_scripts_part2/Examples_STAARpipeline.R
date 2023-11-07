@@ -53,7 +53,7 @@ known_loci <- get(load(paste0(input_dir, "reference_data/known_loci_info.Rdata")
 #       load sparse GRM
 ##########################################
 
-sgrm <- get(load("/content/drive/MyDrive/session05_Rare_variants/1000G_data/PC_sGRM/output.sparseGRM.sGRM.RData"))
+sgrm <- get(load(paste0(input_dir, "1000G_data/PC_sGRM/output.sparseGRM.sGRM.RData")))
 sample_id <- unlist(lapply(strsplit(colnames(sgrm),"_"),`[[`,2))
 
 colnames(sgrm) <- sample_id
