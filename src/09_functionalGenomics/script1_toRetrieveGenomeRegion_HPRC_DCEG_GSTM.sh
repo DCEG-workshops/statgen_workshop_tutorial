@@ -5,8 +5,8 @@
 #SBATCH --job-name Task1-RetrieveGenomicRegion
 #SBATCH --mail-type BEGIN,END
 #
-# load cutadapt/4.0
-module load cutadapt/4.0
+# load cutadapt/4.0 (uncomment the following line on Biowulf)
+# module load cutadapt/4.0
 
 ## Author: Oscar Florez-Vargas
 
@@ -29,8 +29,8 @@ reverseNEG1="TTTACATGTTGATATGCCAGAGCAC"
 error_rate=0.1  # 10% error rate
 
 ## Set path to where FASTA files are being stored
-PATH_TO_FILES=/data/Prokunina_Group/GenomeAssemblies/HPRC_workshop/assemblies
-OUTDIR=/data/Prokunina_Group/GenomeAssemblies/HPRC_workshop/retrievedRegions
+PATH_TO_FILES=${input_dir}/assemblies
+OUTDIR=${analysis_dir}/retrievedRegions
 
 ##########################
 
