@@ -5,9 +5,9 @@
 #SBATCH --job-name Task2-toAlignFastaToReference
 #SBATCH --mail-type BEGIN,END
 #
-# load minimap2/2.26 and samtools/1.17
-module load minimap2/2.26
-module load samtools/1.17
+# load minimap2/2.26 and samtools/1.17 (uncomment the next two lines if it's run on Biowulf)
+#module load minimap2/2.26
+#module load samtools/1.17
 
 ## Author: Oscar Florez-Vargas
 
@@ -17,8 +17,8 @@ module load samtools/1.17
 genomicRegion="hg38_chr1_109655000_109742000"
 
 ## Set path to where BAM files are being stored
-PATH_TO_FILES=/data/Prokunina_Group/GenomeAssemblies/HPRC_workshop/retrievedRegions
-PATH_TO_REFERENCE=/data/Prokunina_Group/GenomeAssemblies/referenceData
+PATH_TO_FILES=${analysis_dir}/retrievedRegions
+PATH_TO_REFERENCE=${input_dir}
 
 ##########################
 
