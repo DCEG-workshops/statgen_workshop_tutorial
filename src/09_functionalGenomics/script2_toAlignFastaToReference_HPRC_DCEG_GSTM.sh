@@ -45,5 +45,5 @@ minimap2 \
 samtools index $PATH_TO_FILES/$genomicRegion/bam_files/HPRC.cb.bam
 
 # Step 4: remove the temporal FASTA file
-rm $PATH_TO_FILES/$genomicRegion/$genomicRegion/bam_files/HPRC_input.fa
+rm $PATH_TO_FILES/$genomicRegion/bam_files/HPRC_input.fa
 
