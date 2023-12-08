@@ -35,10 +35,9 @@ cat $PATH_TO_FILES/$genomicRegion/fasta_files/*.fa > $PATH_TO_FILES/$genomicRegi
 
 
 # Step 2: Align the FASTA sequences to reference human genome build hg38
-# Note here that the -K and -I options are set due to the small system RAM resources on the free version of Google Colab
 minimap2 \
 	-Y -t1 -a -K5M -I2G \
-	$PATH_TO_REFERENCE/genome_hg38.fa \
+	$PATH_TO_REFERENCE/hg38_chr1.fa \
 	$PATH_TO_FILES/$genomicRegion/bam_files/HPRC_input.fa | \
 	samtools sort -@ 6 -o $PATH_TO_FILES/$genomicRegion/bam_files/HPRC.cb.bam
 
@@ -46,5 +45,5 @@ minimap2 \
 samtools index $PATH_TO_FILES/$genomicRegion/bam_files/HPRC.cb.bam
 
 # Step 4: remove the temporal FASTA file
-rm $OUTDIR/$genomicRegion/bam_files/HPRC_input.fa
+rm $PATH_TO_FILES/$genomicRegion/$genomicRegion/bam_files/HPRC_input.fa
 
