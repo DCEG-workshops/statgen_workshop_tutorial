@@ -3,28 +3,19 @@ title: "Mr Tutorial"
 output: html_document
 ---
 
-<a href="https://colab.research.google.com/github/DCEG-workshops/statgen_workshop_tutorial/blob/main/src/06_MR_tutorial.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
-
 # Mendelian randomization practical
 
 We demonstrate how to conduct two-sample Mendelian randomization analyses using the R package `TwoSampleMR` to estimate the causal effect of body mass index (BMI) on coronary heart disease (CHD).
 
 This tutorial is adapted from materials provided by Gibran Hemani and Jie Zheng.
 
-
-
 ---
-
-*Mount Google Drive:* We want to mount the google drive for the data neeed for this workshop. Please open this [link](https://colab.research.google.com/corgiredirector?site=https%3A%2F%2Fdrive.google.com%2Fdrive%2Ffolders%2F1rui3w4tok2Z7EhtMbz6PobeC_fDxTw7G%3Fusp%3Dsharing) with your Google drive and find the "statgen_workshop" folder under "Share with me". Then add a shortcut to the folder under "My Drive"
 
 Let's set some environmental variables
 
-```{python}
-import os
-analysis_dir="/content/06_analysis/"
-input_dir="/content/drive/MyDrive/statgen_workshop/data/workshop6/data/MR/"
-os.environ['analysis_dir']=analysis_dir
-os.environ['input_dir']=input_dir
+```{bash}
+export analysis_dir="/content/06_analysis/"
+export input_dir="/content/drive/MyDrive/statgen_workshop/data/workshop6/data/MR/"
 ```
 
 ### 1. Installation

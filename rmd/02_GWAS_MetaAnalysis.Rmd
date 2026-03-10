@@ -3,8 +3,6 @@ title: "Gwasandmetaanalysis"
 output: html_document
 ---
 
-<a href="https://colab.research.google.com/github/DCEG-workshops/statgen_workshop_tutorial/blob/main/src/02_GWAS%26MetaAnalysis.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
-
 # Overview
 
 In this exercise, we will be using [plink](www.cog-genomics.org/plink/1.9/) to perform Genome Wide Association Studies using the publicly available PennCath data.  First, we will evaluate the data with a continous outcome using **linear regression** and covariates estimated from the --pca step in last lecture. Then, we will evaluate our results using **Quantile-Quantile Plots** (QQplots), **Manhattan plots**, and **Regional plots** for follow-up.  We will also perform another GWAS using the binary trait Coronary Artery Disease (CAD) and **logistic regression** which is often what we use when evaluating germline genetic susceptibility to cancer.
@@ -24,14 +22,10 @@ Now we can look at the contents of the drive using the list (ls) command and ver
 
 We will set path variables to simplify our coding to not require the full drive path for the input and output datasets. I will show some examples with the full path so you can see both.
 
-```{python}
-import os
-input_dir="drive/MyDrive/statgen_workshop/data/workshop2/"
-tools_dir="drive/MyDrive/statgen_workshop/tools"
-analysis_dir=os.getcwd() + "/02_analysis/"
-os.environ['input_dir']=input_dir
-os.environ['analysis_dir']=analysis_dir
-os.environ['tools_dir']=tools_dir
+```{bash}
+export input_dir="drive/MyDrive/statgen_workshop/data/workshop2/"
+export analysis_dir="$(pwd)/02_analysis/"
+export tools_dir="drive/MyDrive/statgen_workshop/tools"
 ```
 
 We will create the local analysis directory

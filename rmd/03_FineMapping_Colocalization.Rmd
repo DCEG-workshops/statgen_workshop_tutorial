@@ -3,8 +3,6 @@ title: "Finemappingandcolocalization"
 output: html_document
 ---
 
-<a href="https://colab.research.google.com/github/DCEG-workshops/statgen_workshop_tutorial/blob/main/src/03_FineMapping%26Colocalization.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
-
 ## **Overview**
 
 In this exercise, first we will be using fine-mapping (SuSiE) to identify the potential set of "statistically" causal variants in a particular region. Then we will use colocalization to evaluate whether a GWAS signal and eQTL association are driven by the same causal variant. We will go over two examples of this.
@@ -29,12 +27,9 @@ Load R magic, so that we can run R here and share variables
 
 We will set path variables to simplify our coding to not require the full drive path for the input and output datasets as done before.
 
-```{python}
-import os
-input_dir="/content/drive/MyDrive/statgen_workshop/data/workshop3/"
-analysis_dir=os.getcwd() + "/03_analysis/"
-os.environ['input_dir']=input_dir
-os.environ['analysis_dir']=analysis_dir
+```{bash}
+export input_dir="/content/drive/MyDrive/statgen_workshop/data/workshop3/"
+export analysis_dir="$(pwd)/03_analysis/"
 ```
 
 Install required R libraries and set shared variables.

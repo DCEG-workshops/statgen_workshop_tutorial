@@ -3,16 +3,11 @@ title: "Rarevariants"
 output: html_document
 ---
 
-<a href="https://colab.research.google.com/github/DCEG-workshops/statgen_workshop_tutorial/blob/main/src/05_RareVariants.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
-
 ## Rare Variant analysis using STAAR pipeline
-
-***Mount Google Drive:***  We want to mount the *google drive* for the data neeed for this workshop. Please open this [link](https://colab.research.google.com/corgiredirector?site=https%3A%2F%2Fdrive.google.com%2Fdrive%2Ffolders%2F1rui3w4tok2Z7EhtMbz6PobeC_fDxTw7G%3Fusp%3Dsharing) with your Google drive and find the "statgen_workshop" folder under "Share with me". Then add a shortcut to the folder under "My Drive"
 
 ***Install [udocker](https://indigo-dc.github.io/udocker/)***: this allows us to run docker containers in colab. Unfortunately Docker cannot be installed on Google colab.
 
-```{python}
-%%shell
+```{bash}
 pip install udocker
 udocker --allow-root install
 ```

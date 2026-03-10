@@ -3,8 +3,6 @@ title: "Heritability Prs"
 output: html_document
 ---
 
-<a href="https://colab.research.google.com/github/DCEG-workshops/statgen_workshop_tutorial/blob/main/src/04_Heritability_PRS.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
-
 # Set up Google Drive
 
 ***Important***: We want to mount the *google drive* for the data neeed for this workshop. Note that this folder is different from previous lectures. Please open this [link](https://drive.google.com/drive/folders/13RlwRIlLmXFeWxB1elz6srb5Eip5HyAU?usp=sharing) with your Google drive and find the "statgen_workshop_04Heritability_PRS" folder under "Share with me". Then add a shortcut to the folder under "My Drive".
@@ -13,12 +11,9 @@ Mount Google drive
 
 Set up path variables
 
-```{python}
-import os
-input_dir="drive/MyDrive/statgen_workshop_04Heritability_PRS/"
-analysis_dir=os.getcwd() + "/04_analysis/"
-os.environ['input_dir']=input_dir
-os.environ['analysis_dir']=analysis_dir
+```{bash}
+export input_dir="drive/MyDrive/statgen_workshop_04Heritability_PRS/"
+export analysis_dir="$(pwd)/04_analysis/"
 ```
 
 Take a look at data in input_dir
@@ -119,14 +114,10 @@ source activate ldsc
 
 set sumstats results variables
 
-```{python}
-munge_result = analysis_dir + "/result/ldsc_herit_overall.sumstats.gz"
-munge_result_tn = analysis_dir + "/result/ldsc_herit_tn.sumstats.gz"
-munge_result_lua = analysis_dir +"/result/ldsc_herit_lua.sumstats.gz"
-
-os.environ['munge_result']=munge_result
-os.environ['munge_result_tn']=munge_result_tn
-os.environ['munge_result_lua']=munge_result_lua
+```{bash}
+export munge_result="${analysis_dir}/result/ldsc_herit_overall.sumstats.gz"
+export munge_result_tn="${analysis_dir}/result/ldsc_herit_tn.sumstats.gz"
+export munge_result_lua="${analysis_dir}/result/ldsc_herit_lua.sumstats.gz"
 ```
 
 the frality scale heritablity is 0.4777

@@ -3,11 +3,7 @@ title: "Functionalgenomics"
 output: html_document
 ---
 
-<a href="https://colab.research.google.com/github/DCEG-workshops/statgen_workshop_tutorial/blob/main/src/09_functionalGenomics.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
-
 # Set up
-
-Important: We want to mount the google drive for the data neeed for this workshop. Please open this [link](https://colab.research.google.com/corgiredirector?site=https%3A%2F%2Fdrive.google.com%2Fdrive%2Ffolders%2F1rui3w4tok2Z7EhtMbz6PobeC_fDxTw7G%3Fusp%3Dsharing) with your Google drive and find the "statgen_workshop" folder under "Share with me". Then add a shortcut to the folder under "My Drive", as shown in the screenshot.
 
 Let's look at the input data directory
 
@@ -17,12 +13,9 @@ Let's look at the input data directory
 
 Set up the path variables
 
-```{python}
-import os
-analysis_dir="/content/09_analysis/"
-input_dir="/content/drive/MyDrive/statgen_workshop/data/workshop9"
-os.environ['analysis_dir']=analysis_dir
-os.environ['input_dir']=input_dir
+```{bash}
+export analysis_dir="/content/09_analysis/"
+export input_dir="/content/drive/MyDrive/statgen_workshop/data/workshop9"
 ```
 
 Let's clone the tutorial repo

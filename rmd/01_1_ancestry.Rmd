@@ -3,8 +3,6 @@ title: "Ancestry"
 output: html_document
 ---
 
-<a href="https://colab.research.google.com/github/DCEG-workshops/statgen_workshop_tutorial/blob/main/src/01_1_ancestry.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
-
 # Overview
 In this exercise, we want to infer the ancestry of our samples. We can do this manually like what is shown in 01_qc.ipynb. But it it may be easier to use tools that are designed to do this, such as [ADMIXTURE](https://dalexander.github.io/admixture/), [STRUCTURE](https://web.stanford.edu/group/pritchardlab/structure.html) and [GrafPop](https://www.ncbi.nlm.nih.gov/projects/gap/cgi-bin/GrafPop_README.html). We will be using GrafPop here
 
@@ -44,13 +42,10 @@ Like last time, we also want to mount the google drive (see 01_qc.ipynb for more
 
 Set variables
 
-```{python}
-input_dir="drive/MyDrive/statgen_workshop/data/workshop1/inputs/penncath_withPheno"
-reference_dir="drive/MyDrive/statgen_workshop/data/workshop1/inputs/ref/"
-analysis_dir=os.getcwd() + "/02_analysis/"
-os.environ['input_dir']=input_dir
-os.environ['analysis_dir']=analysis_dir
-os.environ['reference_dir']=reference_dir
+```{bash}
+export input_dir="drive/MyDrive/statgen_workshop/data/workshop1/inputs/penncath_withPheno"
+export analysis_dir="$(pwd)/02_analysis/"
+export reference_dir="drive/MyDrive/statgen_workshop/data/workshop1/inputs/ref/"
 ```
 
 create analysis dir, this is going to be ephemeral and sits on the hosted runtime environment

@@ -3,18 +3,11 @@ title: "Multi Ancestry Analysis"
 output: html_document
 ---
 
-<a href="https://colab.research.google.com/github/DCEG-workshops/statgen_workshop_tutorial/blob/main/src/07_multi_ancestry_analysis.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
-
 # Set up
 
-Important: We want to mount the google drive for the data neeed for this workshop. Please open this [link](https://colab.research.google.com/corgiredirector?site=https%3A%2F%2Fdrive.google.com%2Fdrive%2Ffolders%2F1rui3w4tok2Z7EhtMbz6PobeC_fDxTw7G%3Fusp%3Dsharing) with your Google drive and find the "statgen_workshop" folder under "Share with me". Then add a shortcut to the folder under "My Drive".
-
-```{python}
-import os
-input_dir="drive/MyDrive/statgen_workshop/data/workshop7/"
-analysis_dir=os.getcwd() + "/07_analysis/"
-os.environ['input_dir']=input_dir
-os.environ['analysis_dir']=analysis_dir
+```{bash}
+export input_dir="drive/MyDrive/statgen_workshop/data/workshop7/"
+export analysis_dir="$(pwd)/07_analysis/"
 ```
 
 Load R magic
@@ -206,7 +199,7 @@ cs_snp_forward <- mJAM_Forward_fit$cs %>%
   rename(index_SNP = index_SNP_legend)
 ```
 
- mJAM-Forward index SNPs and credible sets (meta P values)
+mJAM-Forward index SNPs and credible sets (meta P values)
 
 ```{r}
 plot_fine_mapping_res(by.pop = FALSE,
@@ -253,7 +246,7 @@ plot_fine_mapping_res(by.pop = FALSE,
                       cs_snp = cs_snp_susie)
 ```
 
- mJAM-SuSiE index SNPs and credible sets (population-specific P values)
+mJAM-SuSiE index SNPs and credible sets (population-specific P values)
 
 ```{r}
 plot_fine_mapping_res(by.pop = TRUE,
@@ -298,7 +291,7 @@ note that COJO only provides index SNP selection
 COJO_res
 ```
 
- plot COJO index SNPs
+plot COJO index SNPs
 
 ```{r}
 meta_sumstat %>%
@@ -366,7 +359,7 @@ mscaviar_index = mscaviar_pip %>%
   arrange(desc(Prob_in_pCausalSet)) %>% head(1) %>% pull(MarkerName_old)
 ```
 
- Step 5: plot MsCAVIAR results
+Step 5: plot MsCAVIAR results
 
 ```{r}
 meta_sumstat %>%
@@ -450,7 +443,7 @@ meta_sumstat_chr22 %>%
 
 # PRS Evaluation
 
- ### Import Libraries
+### Import Libraries
 
 Install pROC
 
