@@ -1,0 +1,139 @@
+---
+title: "Ancestry"
+output: html_document
+---
+
+<a href="https://colab.research.google.com/github/DCEG-workshops/statgen_workshop_tutorial/blob/main/src/01_1_ancestry.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+
+# Overview
+In this exercise, we want to infer the ancestry of our samples. We can do this manually like what is shown in 01_qc.ipynb. But it it may be easier to use tools that are designed to do this, such as [ADMIXTURE](https://dalexander.github.io/admixture/), [STRUCTURE](https://web.stanford.edu/group/pritchardlab/structure.html) and [GrafPop](https://www.ncbi.nlm.nih.gov/projects/gap/cgi-bin/GrafPop_README.html). We will be using GrafPop here
+
+# Set up the runtime environment
+
+In this exercise, we want to infer the ancestry of our samples. We can do this manually like what is shown in 01_qc.ipynb. But it it may be easier to use tools that are designed to do this, such as ADMIXTURE, STRUCTURE and GrafPop. We will be using GrafPop here
+
+GrafPop requires a few perl libraries that are not straightforward to install. We therefore use conda to install them. There is already a condacolab package for python and we will install it here.
+Note that after installation it is required to restart the kernel and your runtime parameter will be lost.
+
+Ok, let's see if conda is installed successfully
+
+```{python}
+!conda --version
+```
+
+Now, let's use conda to install the perl modules requried to run GrafPop
+
+```{bash}
+conda install -c bioconda perl-gd
+conda install -c bioconda perl-gdtextutil
+conda install -c bioconda perl-gdgraph
+conda install -c bioconda perl-cgi
+```
+
+Download plink1.9
+
+```{bash}
+if [ ! -f /tools/node/bin/plink ]; then
+   curl -o /tools/node/bin/plink.zip https://s3.amazonaws.com/plink1-assets/plink_linux_x86_64_20230116.zip && \
+   cd /tools/node/bin/ && \
+   unzip plink.zip
+fi
+```
+
+Like last time, we also want to mount the google drive (see 01_qc.ipynb for more details)
+
+Set variables
+
+```{python}
+input_dir="drive/MyDrive/statgen_workshop/data/workshop1/inputs/penncath_withPheno"
+reference_dir="drive/MyDrive/statgen_workshop/data/workshop1/inputs/ref/"
+analysis_dir=os.getcwd() + "/02_analysis/"
+os.environ['input_dir']=input_dir
+os.environ['analysis_dir']=analysis_dir
+os.environ['reference_dir']=reference_dir
+```
+
+create analysis dir, this is going to be ephemeral and sits on the hosted runtime environment
+
+```{bash}
+mkdir -p ${analysis_dir}
+```
+
+Create a directory, download and untar grafPop
+
+```{bash}
+mkdir grafPop1.0 && cd grafPop1.0 && \
+       curl -o grafPop1.0.tar.gz https://www.ncbi.nlm.nih.gov/projects/gap/cgi-bin/GetZip.cgi?zip_name=GrafPop1.0.tar.gz && \
+       tar -zxvf grafPop1.0.tar.gz
+```
+
+Next we want to run GrafPop. We may want to use the QCed dataset for this step. For demonstration purposes we are going to use the input file.
+GrafPop will be using the sample IDs for the outputs, looking at the the penncath.fam file, we see that the within family sample IDs are all the same which will be confusing for GrafPop.
+
+```{bash}
+head ${input_dir}/penncath.fam
+```
+
+We will need to use plink to update the IDs so that they are unique.
+
+```{bash}
+awk '{
+    gsub("\"", "", $1);  # Remove quotes from the first column
+    print "\"" $1 "\"", $2, "\"" $1 "\"", "\"" $1 "_" $2 "\""
+}' ${input_dir}/penncath.fam > ${analysis_dir}/penncath.updateIDs.txt
+
+head ${analysis_dir}/penncath.updateIDs.txt
+```
+
+Ok, let's update the IDs with plink
+
+```{bash}
+plink --bfile ${input_dir}/penncath --update-ids \
+     ${analysis_dir}/penncath.updateIDs.txt --make-bed \
+     --out ${analysis_dir}/penncath.uniqueIDForGrafPop
+```
+
+Let's run GrafPop
+
+```{bash}
+./grafPop1.0/grafpop ${analysis_dir}/penncath.uniqueIDForGrafPop.bed ${analysis_dir}/penncath_grafPop_pops.txt || true
+```
+
+Let's take a peak at the result file
+
+```{bash}
+head ${analysis_dir}/penncath_grafPop_pops.txt
+```
+
+Let's plot the results. We can then use the file browser to the left to view the *png* file.
+
+```{bash}
+perl grafPop1.0/PlotGrafPopResults.pl ${analysis_dir}/penncath_grafPop_pops.txt ${analysis_dir}/penncath_grafPop.png
+```
+
+We will save the ancestry assignment to a file
+
+```{bash}
+perl grafPop1.0/SaveSamples.pl ${analysis_dir}/penncath_grafPop_pops.txt ${analysis_dir}/penncath_grafPop_ancestry.txt
+```
+
+Looks like all but 1 sample are European, let's see what the 1 non-European sample
+
+```{bash}
+grep -v European ${analysis_dir}/penncath_grafPop_ancestry.txt
+```
+
+# Optional
+## save your analysis folder
+Your current working directory ${analysis_dir} is on the runtime environment and is ephemeral. If you like to save the analysis files to your google drive. Or go to the Files tab and download them to your local drive.
+
+```{python}
+# @title
+%%bash
+#cp -r ${analysis_dir} /content/drive/MyDrive/
+```
+
+## save your notebook
+There is revision history of the current notebook under File.
+You can also save a copy of the current notebook to GitHub, GitHub Gist or Google Drive under the File tab.
+

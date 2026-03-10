@@ -1,0 +1,820 @@
+---
+title: "Multi Ancestry Analysis"
+output: html_document
+---
+
+<a href="https://colab.research.google.com/github/DCEG-workshops/statgen_workshop_tutorial/blob/main/src/07_multi_ancestry_analysis.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+
+# Set up
+
+Important: We want to mount the google drive for the data neeed for this workshop. Please open this [link](https://colab.research.google.com/corgiredirector?site=https%3A%2F%2Fdrive.google.com%2Fdrive%2Ffolders%2F1rui3w4tok2Z7EhtMbz6PobeC_fDxTw7G%3Fusp%3Dsharing) with your Google drive and find the "statgen_workshop" folder under "Share with me". Then add a shortcut to the folder under "My Drive".
+
+```{python}
+import os
+input_dir="drive/MyDrive/statgen_workshop/data/workshop7/"
+analysis_dir=os.getcwd() + "/07_analysis/"
+os.environ['input_dir']=input_dir
+os.environ['analysis_dir']=analysis_dir
+```
+
+Load R magic
+
+# PART 1. Multi-population Fine-mapping
+## A single-hit region on chr 12
+
+### mJAM
+
+Step 1. Packages
+
+Install dependencies for the hJAM R libary
+
+```{bash}
+apt-get install libgsl-dev libmpfr-dev
+```
+
+We need to install the hJAM and tidyverse R libaries. Here's the code to install them:
+
+
+```
+devtools::install_github("USCbiostats/hJAM")
+if(!"tidyverse"%in%installed.packages()){install.packages('tidyverse')}
+```
+
+In the interest of time, we will add the pre-installed packages to R path so we don't have to wait for the R package installations.
+
+```{bash}
+cp /content/drive/MyDrive/statgen_workshop/tools/07_multi_ancestry_analysis_R_libs.tgz ./ && \
+   tar -zxf 07_multi_ancestry_analysis_R_libs.tgz && ls usr/local/lib/R/site-library/
+```
+
+Add to R library Path
+
+```{r}
+.libPaths("usr/local/lib/R/site-library/")
+.libPaths()
+```
+
+load R libraries
+
+```{r}
+library(hJAM) ## for mJAM_Forward, mJAM_SuSiE
+library(tidyverse) ## for data cleaning and visualization
+library(glue)
+```
+
+Visualize marginal results
+
+```{r}
+meta_sumstat <- read.table(glue(input_dir, "MultiPopulation_FineMapping/12_109194870_110794870_meta_summary_stat.txt"), header = T)
+```
+
+Meta P.value
+
+```{r}
+meta_sumstat %>%
+  ggplot(aes(x = POS, y = -log10(as.numeric(P.value))))+
+  geom_point(size = 1)+
+  geom_hline(yintercept = -log10(5e-8), linetype="dashed", color = "red")+
+  labs(x = "Position", y = "-log10(meta.p.value)",
+       title = "Marginal signficance of meta-analyzed summary statistics")
+```
+
+Population-specific P.value
+
+```{r}
+meta_sumstat %>%
+  select(c(POS, EUR.P.value, AFR.P.value, HIS.P.value, EAS.P.value)) %>%
+  mutate(EUR.P.value = as.numeric(EUR.P.value),
+         AFR.P.value = as.numeric(AFR.P.value),
+         HIS.P.value = as.numeric(HIS.P.value),
+         EAS.P.value = as.numeric(EAS.P.value)) %>%
+  pivot_longer(cols = EUR.P.value:EAS.P.value,
+               names_to = "pop",
+               values_to = "P.value") %>%
+  ggplot(aes(x = POS, y = -log10(as.numeric(P.value))))+
+  geom_point(size = 1)+
+  geom_hline(yintercept = -log10(5e-8), linetype="dashed", color = "red")+
+  facet_wrap(vars(pop), nrow = 2, scales = "free_y")+
+  labs(x = "Position", y = "-log10(p.value)",
+       title = "Marginal signficance by population")
+```
+
+Run various fine-mapping approaches
+
+#### mJAM-Forward
+
+```{r}
+Marg_Result <- read.table(glue(input_dir, "MultiPopulation_FineMapping/1_mJAM/data/Marg_results.txt"), header = T)
+MAF_Result <- read.table(glue(input_dir, "MultiPopulation_FineMapping/1_mJAM/data/MAF_results.txt"), header = T)
+EUR_ONCO_dosage <- read.table(glue(input_dir, "MultiPopulation_FineMapping/1_mJAM/data/EUR_ONCO_dosages.txt"), header = T, check.names = F)
+AFR_ONCO_dosage <- read.table(glue(input_dir, "MultiPopulation_FineMapping/1_mJAM/data/AFR_ONCO_dosages.txt"), header = T, check.names = F)
+HIS_ONCO_dosage <- read.table(glue(input_dir, "MultiPopulation_FineMapping/1_mJAM/data/HIS_ONCO_dosages.txt"), header = T, check.names = F)
+EAS_ONCO_dosage <- read.table(glue(input_dir, "MultiPopulation_FineMapping/1_mJAM/data/EAS_ONCO_dosages.txt"), header = T, check.names = F)
+
+## sample size of discovery GWAS (as in summary statistics)
+N_cases_EUR <- 122188; N_ctrl_EUR <- 604640
+N_cases_AFR <- 19391; N_ctrl_AFR <- 61608
+N_cases_HIS <- 3931; N_ctrl_HIS <- 26405
+N_cases_EAS <- 10809; N_ctrl_EAS <- 95790
+N_GWAS_EUR <- 4/(1/N_cases_EUR + 1/N_ctrl_EUR)
+N_GWAS_AFR <- 4/(1/N_cases_AFR + 1/N_ctrl_AFR)
+N_GWAS_HIS <- 4/(1/N_cases_HIS + 1/N_ctrl_HIS)
+N_GWAS_EAS <- 4/(1/N_cases_EAS + 1/N_ctrl_EAS)
+```
+
+fit mJAM with forward selection
+
+```{r}
+mJAM_Forward_fit <- hJAM::mJAM_Forward(N_GWAS = c(N_GWAS_EUR, N_GWAS_AFR, N_GWAS_HIS, N_GWAS_EAS),
+                                       X_ref = list(EUR_ONCO_dosage, AFR_ONCO_dosage, HIS_ONCO_dosage, EAS_ONCO_dosage),
+                                       Marg_Result = Marg_Result,
+                                       EAF_Result = MAF_Result,
+                                       condp_cut = 5e-08,
+                                       within_pop_threshold = 0.20,
+                                       across_pop_threshold = 0.10)
+```
+
+index SNP's selected by mJAM_Forward
+
+```{r}
+mJAM_Forward_fit$index
+```
+
+utility function for plotting
+
+```{r}
+plot_fine_mapping_res <- function(by.pop = FALSE,
+                                  selected_index,
+                                  cs_snp){
+
+  if(by.pop){
+    cs_snp_by_pop = cs_snp %>%
+      select(c(index_SNP, CS_SNP, is_index, POS, EUR.P.value, AFR.P.value, HIS.P.value, EAS.P.value)) %>%
+      mutate(EUR.P.value = as.numeric(EUR.P.value),
+             AFR.P.value = as.numeric(AFR.P.value),
+             HIS.P.value = as.numeric(HIS.P.value),
+             EAS.P.value = as.numeric(EAS.P.value)) %>%
+      pivot_longer(cols = EUR.P.value:EAS.P.value,
+                   names_to = "pop",
+                   values_to = "P.value")
+    meta_sumstat %>%
+      select(c(MarkerName, POS, EUR.P.value, AFR.P.value, HIS.P.value, EAS.P.value)) %>%
+      mutate(EUR.P.value = as.numeric(EUR.P.value),
+             AFR.P.value = as.numeric(AFR.P.value),
+             HIS.P.value = as.numeric(HIS.P.value),
+             EAS.P.value = as.numeric(EAS.P.value)) %>%
+      pivot_longer(cols = EUR.P.value:EAS.P.value,
+                   names_to = "pop",
+                   values_to = "P.value") %>%
+      ggplot(aes(x = POS, y = -log10(P.value)))+
+      geom_point(color="grey", size  = 1.5)+
+      geom_point(aes(color = index_SNP, group = index_SNP), data = cs_snp_by_pop, size  = 1)+
+      geom_point(data = filter(cs_snp_by_pop, is_index == T),
+                 colour="red", shape=1, size=1.5, stroke=1)+
+      geom_hline(yintercept = -log10(5e-8), linetype="dashed", color = "red")+
+      facet_wrap(vars(pop), nrow = 2, scales = "free_y")+
+      labs(x = "Position", y = "-log10(p.value)",
+           title = "Index SNPs and credible sets (by population)")
+  }else{
+    meta_sumstat %>%
+      ggplot(aes(x = POS, y = -log10(as.numeric(P.value))))+
+      geom_point(color="grey", size  = 1.5)+
+      geom_point(aes(color = index_SNP, group = index_SNP), data = cs_snp, size  = 1)+
+      geom_point(data = filter(cs_snp, is_index == T),
+                 colour="red", shape=1, size=1.5, stroke=1)+
+      geom_hline(yintercept = -log10(5e-8), linetype="dashed", color = "red")+
+      labs(x = "Position", y = "-log10(p.value)",
+           title = "Index SNPs and credible sets")
+  }
+
+}
+```
+
+pull variants in mJAM-Forward credible sets
+
+```{r}
+selected_index_forward <- mJAM_Forward_fit$index$SNP
+cs_snp_forward <- mJAM_Forward_fit$cs %>%
+  filter(CS_in == TRUE) %>%
+  left_join(meta_sumstat, by = c("CS_SNP"="MarkerName")) %>%
+  mutate(is_index = (index_SNP == CS_SNP)) %>%
+  left_join(tibble(index_SNP = selected_index_forward,
+                   oldname = meta_sumstat$MarkerName_old[match(selected_index_forward,meta_sumstat$MarkerName)],
+                   order = 1:length(selected_index_forward)), by = "index_SNP") %>%
+  mutate(index_SNP_legend = paste0("(#",order,")",oldname)) %>%
+  select(-index_SNP) %>%
+  rename(index_SNP = index_SNP_legend)
+```
+
+ mJAM-Forward index SNPs and credible sets (meta P values)
+
+```{r}
+plot_fine_mapping_res(by.pop = FALSE,
+                      selected_index = selected_index_forward,
+                      cs_snp = cs_snp_forward)
+```
+
+mJAM-Forward index SNPs and credible sets (population-specific P values)
+
+```{r}
+plot_fine_mapping_res(by.pop = TRUE,
+                      selected_index = selected_index_forward,
+                      cs_snp = cs_snp_forward)
+```
+
+#### mJAM-SuSiE
+
+fit mJAM with Sum of Single Effect (Bayesian feature selection)
+
+```{r}
+mJAM_SuSiE_fit <- hJAM::mJAM_SuSiE(Marg_Result = Marg_Result,
+                                   EAF_Result = MAF_Result,
+                                   N_GWAS = c(N_GWAS_EUR, N_GWAS_AFR, N_GWAS_HIS, N_GWAS_EAS),
+                                   X_ref = list(EUR_ONCO_dosage, AFR_ONCO_dosage, HIS_ONCO_dosage, EAS_ONCO_dosage))
+
+
+mJAM_SuSiE_CS_0.95_Output <- hJAM::mJAM_SuSiE_get_cs(mJAM_SuSiE_fit,0.95)
+```
+
+pull mJAM-SuSiE index SNPs and credible sets
+
+```{r}
+selected_index_susie <- mJAM_SuSiE_CS_0.95_Output$index_SNP
+cs_snp_susie <- mJAM_SuSiE_CS_0.95_Output %>%
+  left_join(meta_sumstat, by = c("CS_SNP"="MarkerName")) %>%
+  mutate(is_index = (index_SNP == CS_SNP))
+```
+
+mJAM-SuSiE index SNPs and credible sets (meta P values)
+
+```{r}
+plot_fine_mapping_res(by.pop = FALSE,
+                      selected_index = selected_index_susie,
+                      cs_snp = cs_snp_susie)
+```
+
+ mJAM-SuSiE index SNPs and credible sets (population-specific P values)
+
+```{r}
+plot_fine_mapping_res(by.pop = TRUE,
+                      selected_index = selected_index_susie,
+                      cs_snp = cs_snp_susie)
+```
+
+## COJO
+
+Step 1: installation: https://yanglab.westlake.edu.cn/software/gcta/#Download
+
+```{bash}
+wget https://yanglab.westlake.edu.cn/software/gcta/bin/gcta-1.94.1-linux-kernel-3-x86_64.zip && unzip gcta-1.94.1-linux-kernel-3-x86_64.zip
+```
+
+```{python}
+ls gcta-1.94.1-linux-kernel-3-x86_64/
+```
+
+Step 2: Running COJO using command line
+
+```{bash}
+mkdir -p ${analysis_dir}/2_COJO/results/
+
+./gcta-1.94.1-linux-kernel-3-x86_64/gcta-1.94.1 \
+--bfile ${input_dir}/MultiPopulation_FineMapping/2_COJO/data/12_109194870_110794870 \
+--cojo-file ${input_dir}/MultiPopulation_FineMapping/2_COJO/data/12_109194870_110794870.ma \
+--cojo-slct --cojo-p 5e-08 \
+--out ${analysis_dir}/2_COJO/results/AllPopRes
+```
+
+Read the results in R
+
+```{r}
+COJO_res <- read.table(glue(analysis_dir, "2_COJO/results/AllPopRes", ".jma.cojo"),
+                       header = T, sep = '\t')
+```
+
+note that COJO only provides index SNP selection
+
+```{r}
+COJO_res
+```
+
+ plot COJO index SNPs
+
+```{r}
+meta_sumstat %>%
+  ggplot(aes(x = POS, y = -log10(as.numeric(P.value))))+
+  geom_point(color = "grey")+
+  geom_point(data = meta_sumstat[meta_sumstat$MarkerName %in% COJO_res$SNP,],
+             color = 'black')+
+  geom_point(data = meta_sumstat[meta_sumstat$MarkerName %in% COJO_res$SNP,],
+             colour="red", shape=1, size=2.5, stroke=1.5)+
+  geom_text(
+    data = meta_sumstat[match(COJO_res$SNP, meta_sumstat$MarkerName),],
+    label= COJO_res$SNP,
+    nudge_x = 0.25, nudge_y = 0.3, check_overlap = T, size = 2.5
+  )+
+  labs(x = "Position", y = "-log10(P.value)",
+       title = "COJO index SNPs")
+```
+
+## MsCAVIAR
+
+Step1: installation: https://github.com/nlapier2/MsCAVIAR
+
+```{bash}
+git clone https://github.com/nlapier2/MsCAVIAR.git && cd MsCAVIAR/ && make
+```
+
+Step 2: prepare files for MsCAVIAR
+
+```{r}
+msCAVIAR_Dir = glue(input_dir, "/MultiPopulation_FineMapping/3_msCAVIAR/data/")
+msCAVIAR_output_Dir = glue(analysis_dir, "3_msCAVIAR/results/")
+dir.create(msCAVIAR_output_Dir, recursive=TRUE)
+```
+
+LD and zscores for each population
+
+```{r}
+all.files = list.files(path = msCAVIAR_Dir)
+ld.files = all.files[ endsWith(all.files, paste0("_LD.txt")) ]
+write.table(paste0(msCAVIAR_Dir, ld.files), paste0(msCAVIAR_output_Dir, "ld.files.txt"), quote = F, col.names = F, row.names = F)
+zscore.files = all.files[ endsWith(all.files, paste0("_zscore.txt")) ]
+write.table(paste0(msCAVIAR_Dir, zscore.files), paste0(msCAVIAR_output_Dir, "zscore.files.txt"), quote = F,  col.names = F, row.names = F)
+
+N_Sample = c(N_GWAS_EUR, N_GWAS_AFR, N_GWAS_HIS, N_GWAS_EAS)
+```
+
+Step 3: run MsCAVIAR using command line tool or in R
+
+```{r}
+system(paste0("/content/MsCAVIAR//MsCAVIAR -l ",
+              paste0( msCAVIAR_output_Dir, "ld.files.txt"),
+              " -z ", paste0( msCAVIAR_output_Dir, "zscore.files.txt"),
+              " -n ", paste(round(N_Sample), collapse = ","),
+              " -o ", paste0(msCAVIAR_output_Dir, "output_12_109194870_110794870"),
+              " -c ", 1), intern = T) ## allow max causal = 1
+```
+
+Step 4: read MsCAVIAR results
+
+```{r}
+mscaviar_cs_snps = read.table(paste0(msCAVIAR_output_Dir, "output_12_109194870_110794870_set.txt"), sep = "\t", header=F)
+mscaviar_pip = read.table(paste0(msCAVIAR_output_Dir, "output_12_109194870_110794870_post.txt"), sep = "\t", header=T)
+mscaviar_index = mscaviar_pip %>%
+  left_join(meta_sumstat[,c("MarkerName", "MarkerName_old")], by = c("SNP_ID" = "MarkerName")) %>%
+  arrange(desc(Prob_in_pCausalSet)) %>% head(1) %>% pull(MarkerName_old)
+```
+
+ Step 5: plot MsCAVIAR results
+
+```{r}
+meta_sumstat %>%
+  ggplot(aes(x = POS, y = -log10(as.numeric(P.value))))+
+  geom_point(color = "grey")+
+  geom_point(data = filter(meta_sumstat, MarkerName %in% mscaviar_cs_snps$V1) ,
+             color = "blue")+
+  geom_point(data = filter(meta_sumstat,  MarkerName_old %in% mscaviar_index),
+             colour="red", shape=1, size=2.5, stroke=1.5)+
+  geom_label(
+    data = filter(meta_sumstat,  MarkerName_old %in% mscaviar_index),
+    label= mscaviar_index,
+    nudge_x = 0.25, nudge_y = 0.9, size = 4
+  )+
+  geom_hline(yintercept = -log10(5e-8), linetype="dashed", color = "red")+
+  labs(x = "Position", y = "-log10(meta P.value)", title = "MsCAVIAR index SNPs and credible sets")
+```
+
+# Genomewide PRS
+
+## Multi-population GW PRS with PRS-CSx
+
+Step1: PRS-CSx installation https://github.com/getian107/PRScsx
+
+Please note that the h5py and scipy libraries might be needed in your own runtime (they are pre-installed in the colab runtime).
+
+```{bash}
+git clone https://github.com/getian107/PRScsx.git
+```
+
+Step2: take a look at population-specific PCa summary statistics on chr22
+
+```{r}
+library(glue)
+library(tidyverse)
+sumstat_EUR <- read.table(glue(input_dir, "Genomewide_PRS/data/summaryStats_hm3_chr22.EUR.txt"), header = T)
+head(sumstat_EUR)
+```
+
+Step3: Run PRS-CSx script using command line - this step takes more than an hour to run on the free version of colab. So we provide the commented out code here but will be using pre-run results for the rest of the tutorial
+
+```{bash}
+# mkdir -p ${analysis_dir}/Genomewide_PRS/results/
+
+# python /content/PRScsx/PRScsx.py \
+#  --ref_dir=${input_dir}/Genomewide_PRS/ldRefPanel/ \
+#  --bim_prefix=${input_dir}/Genomewide_PRS/data/H3.hm3.chr22.rsid \
+#  --sst_file=${input_dir}/Genomewide_PRS/data/summaryStats_hm3_chr22.AFR.txt,${input_dir}/Genomewide_PRS/data/summaryStats_hm3_chr22.EUR.txt,${input_dir}/Genomewide_PRS/data/summaryStats_hm3_chr22.EAS.txt,${input_dir}/Genomewide_PRS/data/summaryStats_hm3_chr22.HIS.txt \
+#  --n_gwas=58995,406587,38851,13686 \
+#  --pop=AFR,EUR,EAS,AMR \
+#  --meta=TRUE \
+#  --chrom=22 \
+#  --out_dir=${analysis_dir}/Genomewide_PRS/results/ \
+#  --out_name=test_chr22
+```
+
+Step4: read results
+Note that we are reading in the pre-generated results here, please change the file path if you have run the PRS-CSx script
+
+```{r}
+prscsx_res <- read.table(glue(input_dir, "Genomewide_PRS/results/test_chr22_META_pst_eff_a1_b0.5_phiauto_chr22.txt"), header = F)
+colnames(prscsx_res) <- c("chr", "rsid", "pos", "effect.allele", "other.allele", "prscsx_weight")
+head(prscsx_res)
+```
+
+Step5: visualize weights before vs after PRS-CSx
+
+```{r}
+meta_sumstat_chr22 <- read.table(glue(input_dir,"Genomewide_PRS/data/meta_summaryStats_hm3_chr22.txt"), header = T)
+
+meta_sumstat_chr22 %>%
+  left_join(prscsx_res, by = c("chr","pos","rsid")) %>%
+  mutate(flip_prscsx_weight = (Allele1 == other.allele),
+         prscsx_weight_flipped = ifelse(flip_prscsx_weight, (-1)*prscsx_weight, prscsx_weight)) %>%
+  ggplot(aes(x = pos))+
+  geom_point(aes(y = abs(Effect)), alpha = 0.5, size=1, color = "grey")+
+  geom_point(aes(y = abs(prscsx_weight_flipped)), alpha = 0.5, size=1, color = "blue")+
+  labs(title = "PRS-CSx weights (blue) vs Marginal effect sizes (grey)",
+       y = "weight", x = "position on chr22")
+```
+
+# PRS Evaluation
+
+ ### Import Libraries
+
+Install pROC
+
+```{r}
+install.packages("pROC")
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(purrr) # purrr function
+library(pROC) # roc for glm models
+library(stringr)
+```
+
+### Define Global Vars
+
+```{r}
+data.loc = glue(input_dir, "PRS_Evaluation/")
+data.loc
+```
+
+### Define Functions
+
+```{r}
+
+# pull the weights needed for the PRS calculation for each variant from meta-data (pull info for dosage)
+row_pull = function(in.chr, in.pos, in.ref, in.alt, wt.df.name){
+  wt.df = get(wt.df.name)
+
+    wt.df[wt.df$chr == in.chr & wt.df$pos == in.pos &
+            ((wt.df$effect_allele == in.ref & wt.df$other_allele == in.alt) |
+               (wt.df$other_allele == in.ref & wt.df$effect_allele == in.alt)), ]
+}
+
+# flip dosages in dosage file to reflect added risk
+correct_dosage = function(in.dosage){
+  chrpos.tmp = cur_column()
+  # compare risk allele against alt and flip if mismatch (check what alt refers to: )
+  if (meta.data.wts[meta.data.wts$chr_pos_alt_ref == chrpos.tmp, "wt_flip"][[1]] == 1){
+    abs(in.dosage-2)
+  } else {
+    in.dosage
+  }
+}
+```
+
+### Import Data
+
+```{r}
+
+dta.pc.dosage =
+  glue(data.loc, "dta_PC_PRS_dosage.rds") %>%
+  readRDS()
+
+dta.meta.data =
+  glue(data.loc, "dta.PC.MetaData.rds") %>%
+  readRDS()
+
+# remove effect_weight_new
+PRS.weights.data =
+  glue(data.loc, "PRS.weights.rds") %>%
+  readRDS()
+```
+
+look at all the data to get an idea of what it is
+
+```{r}
+dta.pc.dosage[1:10,1:30] %>% as.data.frame()
+```
+
+```{r}
+dta.pc.dosage %>% group_by(eth, cancer) %>% tally()
+```
+
+```{r}
+dta.meta.data %>% head() %>% as.data.frame()
+```
+
+```{r}
+PRS.weights.data %>% head %>% as.data.frame()
+```
+
+### Prep Data
+
+1) append the weights information (from literature) to our meta-data file
+
+```{r}
+meta.data.wts =
+  dta.meta.data %>%
+  # use our function to create a new column with weights from the weights file
+  # this is basically merging based on chromosome, position, allele 1, and allele 2, it is a
+  # custom function to handle multialleleic cases
+  mutate(prs_info = pmap(.f=row_pull, list(CHR, POS, REF, ALT, "PRS.weights.data")),
+         prs_info_n = prs_info %>% map_int(.f=function(x){nrow(x)})) %>%
+  unnest_wider(prs_info, names_sep="_") %>%
+  # filter out variants from our meta-data that we are not interested in
+  filter(prs_info_n == 1) %>%
+
+  # identify what variants need to have their dosage transformed to reflect added risk
+  # for PRS calculation
+  mutate(wt_flip = ifelse(prs_info_effect_allele != ALT, 1, 0))
+
+meta.data.wts %>% head %>% as.data.frame()
+```
+
+2) use our wt_flip variable to recode the dosages as "risk" based on meta-data file
+
+```{r}
+dta.pc.dosage.risk =
+  dta.pc.dosage %>%
+  # select all covariates from individual-level dosage file, then select all
+  # variants in our meta data file (variants to be used in the PRS calculation)
+  select(-contains(":"), meta.data.wts$chr_pos_alt_ref) %>%
+  # mutate across all dosages (chrpos), pass to flip function that returns transformed dosage vector
+  mutate(across(contains(":"), correct_dosage))
+```
+
+### PRS Calculation
+
+calculate unweighted PRS
+
+create a new variable prs_uwt which is just a sum of all PRS risk alleles, across all variants
+
+```{r}
+dta.pc.dosage.risk$prs_uwt =
+  dta.pc.dosage.risk %>%
+  select(meta.data.wts$chr_pos_alt_ref) %>%
+  as.matrix() %>%
+  apply(., 1, sum)
+```
+
+calculate weighted PRS
+
+Sum all risk alleles, after applying weights to each variant, done using matrix multiplication
+
+```{r}
+dta.pc.dosage.risk$prs_wtd =
+  c(as.matrix(select(dta.pc.dosage.risk, meta.data.wts$chr_pos_alt_ref)) %*% meta.data.wts$prs_info_effect_weight)
+```
+
+### Descriptives of PRS
+
+```{r}
+dta.pc.dosage.risk %>%
+  ggplot(aes(x=prs_wtd, color=as.factor(cancer)))+
+  geom_density() +
+  facet_wrap(~eth)
+```
+
+```{r}
+dta.pc.dosage.risk %>%
+  ggplot(aes(x=prs_wtd, fill=eth, color=eth))+
+  geom_density(alpha=.5)
+```
+
+## Apply Standardization Techniques
+
+## Ancestry-Residual Model for removal of "relatedness/ancestry" variation in PRS
+
+```{r}
+dta.pc.dosage.risk$mdl.resid =
+  lm(data=dta.pc.dosage.risk,
+     formula = as.formula("prs_wtd ~ V1 + V2 + V3 + V4 + V5 + V6 + V7 + V8 + V9 + V10"))$residuals
+```
+
+standardize new 'residualized PRS"
+
+```{r}
+prs_resid_stats =
+  dta.pc.dosage.risk %>%
+  # select controls
+  filter(cancer == 0) %>%
+  summarise(mean_prs_resid = mean(mdl.resid), sd_prs_resid = sd(mdl.resid))
+```
+
+```{r}
+dta.pc.dosage.risk$prs_mdl_resid_std =
+  (dta.pc.dosage.risk$mdl.resid - prs_resid_stats$mean_prs_resid)/prs_resid_stats$sd_prs_resid
+```
+
+Standardized within Race/Eth
+
+```{r}
+prs_eth_stats_eth =
+  dta.pc.dosage.risk %>%
+  # select controls
+  filter(cancer == 0) %>%
+  group_by(eth) %>%
+  summarise(mean_prs_wts_eth = mean(prs_wtd), sd_prs_wtd_eth = sd(prs_wtd))
+```
+
+```{r}
+prs_eth_stats_combined =
+  dta.pc.dosage.risk %>%
+  # select controls
+  filter(cancer == 0) %>%
+  summarise(mean_prs_wts_combined = mean(prs_wtd), sd_prs_wtd_combined = sd(prs_wtd))
+```
+
+```{r}
+dta.pc.dosage.risk =
+  dta.pc.dosage.risk %>%
+  left_join(prs_eth_stats_eth) %>%
+  mutate(prs_wtd_eth_std = (prs_wtd - mean_prs_wts_eth)/sd_prs_wtd_eth,
+         prs_wtd_std = (prs_wtd - prs_eth_stats_combined$mean_prs_wts_combined)/
+           prs_eth_stats_combined$sd_prs_wtd_combined)
+```
+
+## Compare All Types of PRS we estimated
+
+compare prs distributions across race/eth, combined, among controls
+
+```{r}
+prs.compare.plt.data =
+  rbind(dta.pc.dosage.risk %>% select(prs_wtd_std, prs_wtd_eth_std, prs_mdl_resid_std) %>%
+          mutate(eth = "Combined"),
+        dta.pc.dosage.risk %>% select(prs_wtd_std, prs_wtd_eth_std, prs_mdl_resid_std, eth)) %>%
+  pivot_longer(starts_with("prs"), values_to = "PRS_Value", names_to = "PRS_type")
+```
+
+```{r}
+prs.compare.plt.data %>%
+  ggplot(aes(x=PRS_Value, color=PRS_type, fill=PRS_type))+
+  geom_density(alpha=.4) +
+  facet_wrap(~eth, nrow = 1)
+```
+
+```{r}
+prs.compare.plt.data %>%
+  ggplot(aes(x=PRS_Value, color=eth, fill=eth))+
+  geom_density(alpha=.4) +
+  facet_wrap(~PRS_type, nrow = 1)
+```
+
+## Regression Analysis
+
+Simple PRS model with age and PC adjustment
+
+```{r}
+# define formula
+fm = as.formula("cancer ~ prs_wtd_std + age_draw + V1 + V2 + V3 + V4 + V5 + V6")
+
+# fit model
+res = glm(fm, data = dta.pc.dosage.risk, binomial(link='logit'))
+res
+```
+
+view coefficient results as data.frame
+
+```{r}
+res %>% summary() %>% pluck("coefficients") %>% as.data.frame()
+```
+
+check aic
+
+```{r}
+res$aic
+```
+
+check AUC
+
+```{r}
+res_pred_prob = predict(res, newdata = dta.pc.dosage.risk, type = "response")
+roc(dta.pc.dosage.risk$cancer ~ res_pred_prob, plot = TRUE, print.auc = TRUE)
+```
+
+AUC is 0.7075, lets compare against a model with the covariates (which may be the ones actually producing a high auc)
+
+fit model
+
+```{r}
+null.mdl.res = glm(as.formula("cancer ~ age_draw + V1 + V2 + V3 + V4 + V5 + V6"),
+                   data = dta.pc.dosage.risk, binomial(link='logit'))
+
+res_pred_prob_null_mdl = predict(null.mdl.res, newdata = dta.pc.dosage.risk, type = "response")
+roc(dta.pc.dosage.risk$cancer ~ res_pred_prob_null_mdl, plot = TRUE, print.auc = TRUE)
+```
+
+the null model produces an AUC of 0.5832, versus including PRS which is .71, this is a considerable increase due to PRS.
+
+## Compare a variety of models
+
+prs terms to evaluate: prs_wtd_std, prs_wtd_eth_std, prs_mdl_resid_std
+
+function to run regression and pull PRS term and other fit stats
+
+```{r}
+fit_prs_models = function(in.model, in.eth, in.df.name){
+  dta.tmp = get(in.df.name)
+
+  # filter data
+  if (in.eth != "Combined"){
+    dta.tmp =
+      dta.tmp %>%
+      filter(eth == in.eth)
+  }
+
+  # fit model:
+  res = glm(as.formula(in.model), data = dta.tmp, binomial(link='logit'))
+
+  # extract prs terms
+  res.df =
+    res %>% summary() %>% pluck("coefficients") %>% as.data.frame() %>%
+    mutate(var = row.names(.)) %>%
+    filter(grepl("prs_", var))
+
+  # check aic
+  res.df$aic = res$aic
+
+  # check AUC
+  res_pred_prob = predict(res, newdata = dta.pc.dosage.risk, type = "response")
+  res.df$auc = roc(dta.pc.dosage.risk$cancer ~ res_pred_prob, plot = F, print.auc = F)$auc[[1]]
+
+  return(res.df)
+}
+```
+
+function to help build results/models data frame
+
+```{r}
+dup_over = function(in.df, in.varname, in.levels){
+  in.df = in.df %>%
+    mutate(tmp_in_varname = 1 %>%
+             map(.f=function(x){data.frame(tmp_in_varname=in.levels)})) %>%
+    unnest(tmp_in_varname)
+
+  names(in.df)[names(in.df)=="tmp_in_varname"] = in.varname
+  in.df
+}
+```
+
+build results/model dataframe and run regressions
+
+```{r}
+all.fit.res =
+  data.frame(eth = c(unique(dta.pc.dosage.risk$eth), "Combined")) %>%
+  dup_over("PRS", c("prs_wtd_std", "prs_wtd_eth_std", "prs_mdl_resid_std")) %>%
+  dup_over("model_type", c("cancer ~ prs",
+                            "cancer ~ prs + age_draw",
+                            "cancer ~ prs + age_draw + V1 + V2 + V3 + V4 + V5 + V6")) %>%
+  mutate(model = str_replace(model_type, "prs", PRS),
+         model_type = ifelse(grepl("V1", model_type), "cancer ~ prs + age_draw + PCs", model_type)) %>%
+
+  # map analyses over fit parameters (run regressions)
+  mutate(fit_results = pmap(.f=fit_prs_models, list(model, eth, "dta.pc.dosage.risk"))) %>%
+  # unnest returned results
+  unnest_wider(fit_results)
+```
+
+View PRS Beta Coefficents (exp(beta) for HRs)
+
+```{r}
+all.fit.res %>%
+  mutate(beta_lci = Estimate-(1.96*`Std. Error`),
+         beta_uci = Estimate+(1.96*`Std. Error`)) %>%
+
+  ggplot(aes(x=Estimate, y=model_type, color=PRS, xmin=beta_lci, xmax=beta_uci, label=sprintf("%.2f", auc)))+
+  geom_point(position = position_dodge(width=.5), size=2.5) +
+  geom_linerange(position = position_dodge(width=.5), linewidth = 1.5) +
+  geom_text(position = position_dodge(width=.5), x=.4, size=2.5)+
+  xlim(.3,1.3)+
+  facet_wrap(~eth) +
+  theme_light()
+```
+

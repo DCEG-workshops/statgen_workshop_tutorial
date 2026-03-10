@@ -1,0 +1,214 @@
+---
+title: "Mr Tutorial"
+output: html_document
+---
+
+<a href="https://colab.research.google.com/github/DCEG-workshops/statgen_workshop_tutorial/blob/main/src/06_MR_tutorial.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+
+# Mendelian randomization practical
+
+We demonstrate how to conduct two-sample Mendelian randomization analyses using the R package `TwoSampleMR` to estimate the causal effect of body mass index (BMI) on coronary heart disease (CHD).
+
+This tutorial is adapted from materials provided by Gibran Hemani and Jie Zheng.
+
+
+
+---
+
+*Mount Google Drive:* We want to mount the google drive for the data neeed for this workshop. Please open this [link](https://colab.research.google.com/corgiredirector?site=https%3A%2F%2Fdrive.google.com%2Fdrive%2Ffolders%2F1rui3w4tok2Z7EhtMbz6PobeC_fDxTw7G%3Fusp%3Dsharing) with your Google drive and find the "statgen_workshop" folder under "Share with me". Then add a shortcut to the folder under "My Drive"
+
+Let's set some environmental variables
+
+```{python}
+import os
+analysis_dir="/content/06_analysis/"
+input_dir="/content/drive/MyDrive/statgen_workshop/data/workshop6/data/MR/"
+os.environ['analysis_dir']=analysis_dir
+os.environ['input_dir']=input_dir
+```
+
+### 1. Installation
+
+Install a dependency for the `TwoSampleMR` package
+
+```{python}
+!apt install libgmp-dev
+```
+
+Normally we want to install the `TwoSampleMR` package by using devtools in R:
+<br>
+`devtools::install_github("MRCIEU/TwoSampleMR")`
+<br>
+It takes more than 15 minutes on Google colab. We will use the pre-installed library instead.
+<br>
+
+```{bash}
+cp /content/drive/MyDrive/statgen_workshop/tools/TwoSampleMR_libs.tgz ./
+```
+
+```{bash}
+tar -zxvf TwoSampleMR_libs.tgz
+```
+
+```{python}
+!ls usr/local/lib/R/site-library/
+```
+
+Add to R library Path
+
+```{r}
+.libPaths("usr/local/lib/R/site-library/")
+.libPaths()
+```
+
+```{r}
+list.files(input_dir)
+```
+
+```{r}
+library(TwoSampleMR)
+library(ggplot2)
+library(glue)
+```
+
+## 2. Load SNP-exposure summary statistics
+
+We use the BMI summary statistics from the GIANT Consortium 2015 study. The dataset was extracted from MR base and saved as a local file.
+
+```{r}
+# To select the BMI data from the MR-Base database, you would use the following code
+# ao <- read.csv("./available_outcomes.csv")
+# ao.bmi<-ao[ao$trait=="Body mass index",]
+# ao.bmi<-ao.bmi[ao.bmi$year==2015,]
+# ao.bmi<-ao.bmi[ao.bmi$population=="Mixed",]
+# id.bmi<-ao.bmi$id
+# bmi_exp_data <- extract_instruments(outcomes=id.bmi)
+# We have selected the BMI data from MR-Base database for you and extracted the instruments
+bmi_exp_data <- read.table(glue(input_dir, "bmi_exp_data.txt"), header=TRUE)
+dim(bmi_exp_data)
+```
+
+```{r}
+head(bmi_exp_data)
+```
+
+## 3. Load SNP-outcome summary statistics
+
+Summary data are from the CARDIoGRAM 2015 study.
+
+```{r}
+# To select the CHD data from CARDIoGRAM in the MR-Base database, you would use the following code
+# ao.chd<-ao[ao$trait=="Coronary heart disease",]
+# ao.chd<-ao.chd[ao.chd$year==2015,]
+# id.chd<-ao.chd$id
+# chd_out_data<-extract_outcome_data(bmi_exp_data$SNP,id.chd,proxies=TRUE)
+# We have extracted the BMI SNPs from the CHD dataset in the MR-Base database for you
+chd_out_data <- read.table(glue(input_dir, "chd_out_data.txt"), header=TRUE)
+dim(chd_out_data)
+```
+
+```{r}
+head(chd_out_data)
+```
+
+## 4. Harmonize data
+
+Harmonise the CHD and BMI datasets so that the effect alleles are the same (and reflect the BMI increasing allele).
+
+This syntax will flip the log odds ratio and effect alleles in the CARDIoGRAM dataset where the effect alleles are different between CARDIoGRAMplusC4D and GIANT.
+
+```{r}
+dat <- harmonise_data(bmi_exp_data, chd_out_data, action = 2)
+dim(dat)
+```
+
+If you explore the dataset you'll notice that effect alleles and log odds ratios have been flipped in the CHD dataset where the effect allele in the CHD dataset was different from the effect allele in the BMI dataset.
+
+Are there any palindromic (A/C or G/T) SNPs? Palindromic SNPs are strand ambiguous. Harmonization as above may be incorrect.
+
+```{r}
+
+palindomic_ac<-subset(dat,effect_allele.exposure %in% "A"&other_allele.exposure %in% "T")
+palindomic_ca<-subset(dat,effect_allele.exposure %in% "T"&other_allele.exposure %in% "A")
+palindomic_gt<-subset(dat,effect_allele.exposure %in% "G"&other_allele.exposure %in% "C")
+palindomic_tg<-subset(dat,effect_allele.exposure %in% "C"&other_allele.exposure %in% "G")
+
+rbind(dim(palindomic_ac),
+      dim(palindomic_ca),
+      dim(palindomic_gt),
+      dim(palindomic_tg))
+```
+
+Check the allele frequencies (AF) of palindromic SNPs.
+1. If the AF of the effect allele in the exposure data is $p$, and the AF in the outcome data is $1-p$, flip the sign of `beta.outcome`.
+2. If the AF is close to 0.5, we cannot determine whether the strand is consistent between exposure and control. Remove the SNP to avoid error.
+
+```{r}
+rbind(palindomic_ac,palindomic_ca,palindomic_gt,palindomic_tg)[,c("SNP","effect_allele.exposure","other_allele.exposure","effect_allele.outcome","other_allele.outcome","eaf.exposure","eaf.outcome","beta.exposure","beta.outcome")]
+```
+
+In this case, the AF in the exposure and outcome datasets are consistent and different from 0.5. We do not need to flip the sign or remove any SNPs.
+
+## 5. Run MR analysis
+
+Let's use the MR-Base R package to estimate the effects using the IVW, MR-Egger, weighted median and weighted mode methods.
+
+```{r}
+# Have a look at the mr_method_list() function
+mr_results <- mr(dat, method_list=c("mr_ivw","mr_egger_regression","mr_weighted_median", "mr_weighted_mode"))
+mr_results
+```
+
+Estimate odds ratio and 95% confidence interval
+
+```{r}
+c(exp(mr_results$b[1]),
+  exp(mr_results$b[1]-1.96*mr_results$se[1]),
+  exp(mr_results$b[1]+1.96*mr_results$se[1]))
+```
+
+## 6. Sensitivity analysis
+
+#### Heterogeneity test
+
+```{r}
+mr_heterogeneity(dat)
+```
+
+#### Pleiotropy test
+
+```{r}
+mr_pleiotropy_test(dat)
+```
+
+#### Single SNP analysis
+
+```{r}
+res_single <- mr_singlesnp(dat)
+```
+
+#### Generate a scatter plot comparing the different methods
+
+```{r}
+mr_scatter_plot(mr_results, dat)
+```
+
+#### Generate a forest plot of each of the SNP effects, which are then meta-analysed using the IVW and MR-Egger methods
+
+```{r}
+mr_forest_plot(res_single)
+```
+
+#### Generate a funnel plot to check asymmetry
+
+```{r}
+mr_funnel_plot(res_single)
+```
+
+#### Run a leave-one-out analysis and generate a plot to test whether any one SNP is driving any pleiotropy or asymmetry in the estimates
+
+```{r}
+res_loo <- mr_leaveoneout(dat)
+mr_leaveoneout_plot(res_loo)
+```
+

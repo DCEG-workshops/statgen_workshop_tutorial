@@ -1,0 +1,114 @@
+---
+title: "Rarevariants"
+output: html_document
+---
+
+<a href="https://colab.research.google.com/github/DCEG-workshops/statgen_workshop_tutorial/blob/main/src/05_RareVariants.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+
+## Rare Variant analysis using STAAR pipeline
+
+***Mount Google Drive:***  We want to mount the *google drive* for the data neeed for this workshop. Please open this [link](https://colab.research.google.com/corgiredirector?site=https%3A%2F%2Fdrive.google.com%2Fdrive%2Ffolders%2F1rui3w4tok2Z7EhtMbz6PobeC_fDxTw7G%3Fusp%3Dsharing) with your Google drive and find the "statgen_workshop" folder under "Share with me". Then add a shortcut to the folder under "My Drive"
+
+***Install [udocker](https://indigo-dc.github.io/udocker/)***: this allows us to run docker containers in colab. Unfortunately Docker cannot be installed on Google colab.
+
+```{python}
+%%shell
+pip install udocker
+udocker --allow-root install
+```
+
+This is an optional step. We have saved the docker image as a tar file (staarpipeline.tar) by using the following command: <br>
+`docker save -o staarpipeline.tar zilinli/staarpipeline:0.9.7`
+<br>
+It is a lot faster (~1.5 minutes) to load the tar file than pulling the Docker image from Docker hub.
+
+```{bash}
+udocker --allow-root load \
+   -i /content/drive/MyDrive/statgen_workshop/containers/staarpipeline.tar zilinli/staarpipeline
+```
+
+Check to see if we see the loaded docker image
+
+```{bash}
+udocker --allow-root images
+```
+
+At some time, each container run may occupy the precious space on the VM, so we may want to take a look and delete some of them to save space. The line for removing containers is currently commented out as we haven't run any containers yet.
+
+```{bash}
+udocker --allow-root ps
+#udocker --allow-root rm <container_id>
+```
+
+Let's clone the statgen workshop tutorial GitHub repo
+
+```{bash}
+git clone https://github.com/DCEG-workshops/statgen_workshop_tutorial.git
+```
+
+```{python}
+!ls /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/
+```
+
+Create the analysis directory on the VM
+
+```{python}
+!mkdir /content/analysis_dir05/
+```
+
+We will run the first step, which is to prepare for the 1000 genomes files to be used by the STAAR pipeline.
+
+```{python}
+!cat /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Association_Analysis_PreStep_1kG.r
+```
+
+Note that if you did not load the Docker image in the previous step, it would pull it from Docker hub now and may take a long time (10+ minutes). If the Docker image has been loaded from the tar file, this step takes about 2 minutes.
+
+```{bash}
+udocker --allow-root  run -v /content/ zilinli/staarpipeline:0.9.7 \
+        Rscript /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Association_Analysis_PreStep_1kG.r
+```
+
+Let's see if the output files are there
+
+```{python}
+!ls -l /content/analysis_dir05/
+```
+
+Next step is to simuate the phenotype for analysis
+
+```{python}
+!cat /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Example_Simulated_Phenotype.R
+```
+
+Let's run the simulation script, this should take < 3 minutes
+
+```{bash}
+udocker --allow-root  run -v /content/ zilinli/staarpipeline:0.9.7 \
+        Rscript /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Example_Simulated_Phenotype.R
+```
+
+Is the phenotype file generated?
+
+```{python}
+!ls -l /content/analysis_dir05/
+```
+
+Finally, we are ready to run the STAAR pipeline
+
+```{python}
+!cat /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Examples_STAARpipeline.R
+```
+
+Let's run it, this is going to take ~ 12 minutes.  We could use this time to go over the preprocessing steps for 1000 genomes data
+https://github.com/DCEG-workshops/statgen_workshop_tutorial/tree/main/src/05_RareVariants
+
+The “errors" you see here correspond to the fact that the underlying variant set of interest does not have 2 valid variants in it so technically it is not a proper variant set.
+<br>
+In STAARpipeline we used try() method to catch these errors without making the program to crash.
+
+```{bash}
+udocker --allow-root  run -v /content/ zilinli/staarpipeline:0.9.7 \
+        Rscript /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Examples_STAARpipeline.R
+```
+

@@ -1,0 +1,330 @@
+---
+title: "Heritability Prs"
+output: html_document
+---
+
+<a href="https://colab.research.google.com/github/DCEG-workshops/statgen_workshop_tutorial/blob/main/src/04_Heritability_PRS.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+
+# Set up Google Drive
+
+***Important***: We want to mount the *google drive* for the data neeed for this workshop. Note that this folder is different from previous lectures. Please open this [link](https://drive.google.com/drive/folders/13RlwRIlLmXFeWxB1elz6srb5Eip5HyAU?usp=sharing) with your Google drive and find the "statgen_workshop_04Heritability_PRS" folder under "Share with me". Then add a shortcut to the folder under "My Drive".
+
+Mount Google drive
+
+Set up path variables
+
+```{python}
+import os
+input_dir="drive/MyDrive/statgen_workshop_04Heritability_PRS/"
+analysis_dir=os.getcwd() + "/04_analysis/"
+os.environ['input_dir']=input_dir
+os.environ['analysis_dir']=analysis_dir
+```
+
+Take a look at data in input_dir
+
+```{bash}
+ls ${input_dir}/data/
+```
+
+load R magic, so that we can run R here and share variables
+
+Install conda in colab
+
+```{python}
+!conda --version
+```
+
+Let's install gcta conda environment, this takes about 2 minutes
+
+```{bash}
+conda install -c bioconda gcta=1.93.2beta
+```
+
+```{bash}
+gcta64
+```
+
+Running GCTA to get the heritability
+Data were generated using 1000 Genomes European Data CHR 22 data
+Heritability was set up as 0.2
+Causal SNPs proportion: 5%
+
+Step 1, Compute the Genetic relationship matrix (GRM)
+
+```{python}
+!mkdir /content/04_analysis/
+!mkdir /content/04_analysis/result/
+```
+
+```{r}
+
+system(paste0("gcta64 ",
+              "--bfile ",input_dir,"data/chr22 ",
+              "--make-grm ",
+              "--out ",analysis_dir,"result/chr22"))
+```
+
+Step 2, Compute the Heritability
+
+```{r}
+system(paste0("gcta64 ",
+              "--reml ",
+              "--grm ",analysis_dir,"result/chr22 ",
+              "--pheno ",analysis_dir,"result/phenotype.phen ",
+              "--grm-cutoff 0.05 ",
+              "--out ",analysis_dir,"result/gcta_herit"))
+```
+
+# Use LDSC to estimate heritability
+Data were obtained from the GWAS summary statistics of breast cancer
+Three different traits were included: overall breast cancer risk, Luminal A, Triple negative
+More background of the GWAS can be found in: https://www.nature.com/articles/s41588-020-0609-2
+
+We will install the ldsc conda environment, this step may take 10 minutes+
+
+```{bash}
+git clone https://github.com/bulik/ldsc.git && cd ldsc && conda env create --file environment.yml
+```
+
+look at the data,
+the data is based on breast cancer GWAS
+
+- snpid; if the SNP has rs id, then snpid is rsid, otherwise snpid is chr:position
+- CHR: chromosome
+- bp: GRCh37 (hg19)
+- A1: effect_allele
+- A2: non_effect_allele
+- Z: Z-statistics
+- P: P-value
+- info: imputation quality score
+- MAF: minor allele frequency
+- N: effective-sample size; N was calculated as 1/(var(beta)*2*f*(1-f))
+- effective sample size is needed if one wants to calculate the logit-scale genetic variance
+
+```{r}
+library(data.table)
+bcac_overall <- fread(paste0(input_dir,"data/overall_bc"))
+head(bcac_overall)
+```
+
+```{bash}
+source activate ldsc
+./ldsc/munge_sumstats.py --sumstats ${input_dir}/data/overall_bc \
+              --out ${analysis_dir}/result/ldsc_herit_overall \
+              --merge-alleles ${input_dir}/data/eur_w_ld_chr/w_hm3.snplist \
+              --chunksize 500000 \
+              --signed-sumstats Z,0 --info-min 0.3 --maf-min 0.01
+```
+
+set sumstats results variables
+
+```{python}
+munge_result = analysis_dir + "/result/ldsc_herit_overall.sumstats.gz"
+munge_result_tn = analysis_dir + "/result/ldsc_herit_tn.sumstats.gz"
+munge_result_lua = analysis_dir +"/result/ldsc_herit_lua.sumstats.gz"
+
+os.environ['munge_result']=munge_result
+os.environ['munge_result_tn']=munge_result_tn
+os.environ['munge_result_lua']=munge_result_lua
+```
+
+the frality scale heritablity is 0.4777
+
+```{bash}
+source activate ldsc
+./ldsc/ldsc.py --h2 ${munge_result} \
+       --ref-ld-chr ${input_dir}/data/eur_w_ld_chr/ \
+       --w-ld-chr ${input_dir}/data/eur_w_ld_chr/ \
+       --out ${analysis_dir}/result/h2_overall \
+```
+
+genetic correlation calculation for luminal A and triple negative breast cancer subtypes
+
+munge the luminal A and triple negative summary statistics
+
+```{r}
+lua <- fread(paste0(input_dir,"data/lua_bc"))
+head(lua)
+```
+
+```{bash}
+source activate ldsc
+./ldsc/munge_sumstats.py \
+              --sumstats ${input_dir}/data/lua_bc \
+              --out ${analysis_dir}/result/ldsc_herit_lua \
+              --merge-alleles ${input_dir}/data/eur_w_ld_chr/w_hm3.snplist \
+              --chunksize 500000 \
+              --signed-sumstats Z,0 --info-min 0.3 --maf-min 0.01 \
+```
+
+munge the luminal A and triple negative summary statistics
+
+```{bash}
+source activate ldsc
+./ldsc/munge_sumstats.py \
+              --sumstats ${input_dir}/data/tn_bc \
+              --out ${analysis_dir}/result/ldsc_herit_tn \
+              --merge-alleles ${input_dir}/data/eur_w_ld_chr/w_hm3.snplist \
+              --chunksize 500000 \
+              --signed-sumstats Z,0 --info-min 0.3 --maf-min 0.01
+```
+
+calculate genetic correlation
+
+```{bash}
+source activate ldsc
+./ldsc/ldsc.py \
+              --rg ${munge_result_lua},${munge_result_tn} \
+              --ref-ld-chr ${input_dir}/data/eur_w_ld_chr/ \
+              --w-ld-chr ${input_dir}/data/eur_w_ld_chr/ \
+              --out ${analysis_dir}/result/rg_lua_tn
+
+#genetic correlation 0.4829 (s.e. 0.0512)
+```
+
+stratified LD-score regression using baseline annotation
+
+```{bash}
+source activate ldsc
+./ldsc/ldsc.py \
+              --h2 ${munge_result} \
+              --ref-ld-chr ${input_dir}/data/1000G_Phase3_baselineLD_ldscores/baselineLD. \
+              --w-ld-chr ${input_dir}/data/1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC. \
+              --overlap-annot  \
+              --frqfile-chr ${input_dir}/data/1000G_Phase3_frq/1000G.EUR.QC. \
+              --out ${analysis_dir}/result/h2_sldsc
+```
+
+```{r}
+enrichment_result = fread(paste0(analysis_dir,"result/h2_sldsc.results"))
+which.max(enrichment_result$Enrichment)
+head(enrichment_result)
+```
+
+```{r}
+enrichment_result[13,]
+```
+
+Construct the PRS using clumping and thresholding
+Data were generated using 1000 Genomes European population as the reference data
+Summary statistics of CHR 22 were provided
+PLINK 1.9 will be used for the clumping
+PLINK 2.0 will be used for score calculation
+R2 between PRS and Y will be calculated using R
+
+Install plink 1.9 and 2.0 conda environments, takes about 1 minute
+
+```{bash}
+conda install -c bioconda plink
+conda install -c bioconda plink2
+```
+
+clumping with windowsize 500kb, clumping r2 0.01, max p-value 1.0
+
+```{r}
+
+library(glue)
+
+sum_data_file = glue(input_dir, "data/EUR_sum_data")
+ref_data = glue(input_dir, "data/1kg_eur_22/chr_22")
+out_file = glue(analysis_dir, "result/LD_clump")
+
+res = system(paste0("plink ",
+"--bfile ",ref_data," ",
+"--clump ",sum_data_file," ",
+"--clump-p1 1 ",
+"--clump-r2 0.1  ",
+"--clump-kb 500 ",
+"--out ",out_file))
+```
+
+load the clump result
+
+```{r}
+library(data.table)
+LD_clump = fread(paste0(out_file,".clumped"))[,3,drop=F]
+head(LD_clump)
+```
+
+load the summary statistics
+
+```{r}
+EUR_sum = fread(sum_data_file)
+head(EUR_sum)
+```
+
+match the LD clumping results with summary statistics
+
+```{r}
+library(dplyr)
+prs_prep = left_join(LD_clump,EUR_sum, by = "SNP")
+head(prs_prep)
+```
+
+SNPs are ranked from the smallest p-value to largest p-value
+
+```{r}
+
+pthres <- c(5E-08,5E-07,5E-06,5E-05,5E-04,5E-03,5E-02,5E-01,1.0)
+for(k in 1:length(pthres)){
+  prs_coeff = prs_prep %>%
+    filter(P<=pthres[k]) %>%
+    select(SNP, A1, BETA) %>%
+    as.data.frame()
+
+  write.table(prs_coeff,
+              file = glue("{analysis_dir}/result/prs_coeff_{k}"),
+              row.names = F,
+              col.names = T,
+              quote = F)
+
+  geno_file = glue(input_dir, "data/prs_genotype/chr22_test")
+  prs_coeff_file = paste0(analysis_dir, "/result/prs_coeff_",k)
+ prs_out = paste0(analysis_dir, "/result/prs_",k)
+  res <- system(paste0("plink2 ",
+                       "--score ",prs_coeff_file," cols=+scoresums,-scoreavgs header no-mean-imputation  ",
+                       "--bfile ",geno_file," --out ",prs_out))
+}
+```
+
+- Evaluate the performance of
+- We have 20,000 people for tuning and validation purpose
+- ID:10,001-11,000 will be used for the tuning dataset: select best p-value thresholding cutoff
+- ID:11,001-12,000 will be used for the validation dataset: report the final performance
+- read the outcome
+
+```{r}
+y_out = fread(  glue(input_dir, "data/y_out"))
+y_tun = y_out[1:10000,"y"]
+y_vad = y_out[10001:20000,"y"]
+#create a vector to same the performance
+r2_vec_tun = rep(0,length(pthres))
+for(k in 1:length(pthres)){
+
+  prs = fread(glue("{analysis_dir}/result/prs_{k}.sscore"))
+
+  prs_tun = prs$SCORE1_SUM[1:10000]
+  model = lm(y_tun$y~prs_tun)
+  r2_vec_tun[k] = summary(model)$r.squared
+}
+```
+
+find best performance on the tuning dataset
+
+```{r}
+print(r2_vec_tun)
+idx.max = which.max(r2_vec_tun)
+idx.max
+```
+
+evaluate it on the validation
+
+```{r}
+prs = fread(glue("{analysis_dir}/result/prs_{idx.max}.sscore"))
+prs_vad = prs$SCORE1_SUM[10001:20000]
+model = lm(y_vad$y~prs_vad)
+r2 = summary(model)$r.squared
+print(r2)
+```
+

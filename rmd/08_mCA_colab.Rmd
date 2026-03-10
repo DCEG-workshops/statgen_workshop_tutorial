@@ -1,0 +1,399 @@
+---
+title: "Mca Colab"
+output: html_document
+---
+
+<a href="https://colab.research.google.com/github/DCEG-workshops/statgen_workshop_tutorial/blob/main/src/08_mCA_colab.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+
+## Genetic mosaicism practical
+
+### 1. Set Up
+
+***Mount Google Drive:***  We want to mount the *google drive* for the data neeed for this workshop. Please open this [link](https://drive.google.com/drive/folders/1Q7PK-JWnT6FC2wKhhut_FCYTyzp1Ykre?usp=sharing) with your Google drive and find the "statgen_workshop_mosaicism" folder under "Share with me". Then add a shortcut to the folder under "My Drive"
+
+Set path variables
+
+```{python}
+import os
+analysis_dir="/content/08_analysis/"
+ref="/content/drive/MyDrive/statgen_workshop_mosaicism/ref_files/human_g1k_v37.fasta"
+genome_studio_file="/content/drive/MyDrive/statgen_workshop_mosaicism/test_set/test_set1.txt"
+maps="/content/drive/MyDrive/statgen_workshop_mosaicism/ref_files/genetic_map_hg19_withX.txt.gz"
+kgp_pfx="/content/drive/MyDrive/statgen_workshop_mosaicism/ref_files/ALL.chr"
+kgp_sfx=".phase3_integrated.20130502.genotypes"
+cnp="/content/drive/MyDrive/statgen_workshop_mosaicism/ref_files/cnp.grch37.bed"
+cyto="/content/drive/MyDrive/statgen_workshop_mosaicism/ref_files/cytoBand.hg19.txt.gz"
+pre_phasing_data_dir="/content/drive/MyDrive/statgen_workshop_mosaicism/phasing/by_chrs/"
+mhc_reg="6:27486711-33448264"
+kir_reg="19:54574747-55504099"
+rule="GRCh37"
+temp_dir="/content/temp/"
+to_bcf="/content/to_bcf/"
+phasing="/content/phasing/"
+phasing_by_chrs="/content/phasing/by_chrs/"
+mocha="/content/mocha/"
+plots="/content/plots/"
+chr="$chr"
+os.environ['analysis_dir']=analysis_dir
+os.environ['ref']=ref
+os.environ['genome_studio_file']=genome_studio_file
+os.environ['maps']=maps
+os.environ['kgp_pfx']=kgp_pfx
+os.environ['kgp_sfx']=kgp_sfx
+os.environ['cnp']=cnp
+os.environ['cyto']=cyto
+os.environ['pre_phasing_data_dir']=pre_phasing_data_dir
+os.environ['mhc_reg']=mhc_reg
+os.environ['kir_reg']=kir_reg
+os.environ['rule']=rule
+os.environ['temp_dir']=temp_dir
+os.environ['to_bcf']=to_bcf
+os.environ['phasing']=phasing
+os.environ['phasing_by_chrs']=phasing_by_chrs
+os.environ['mocha']=mocha
+os.environ['plots']=plots
+os.environ['chr']=chr
+```
+
+***Install [udocker](https://indigo-dc.github.io/udocker/)***: this allows us to run docker containers in colab. Unfortunately Docker cannot be installed on Google colab.
+
+```{python}
+%%shell
+pip install udocker
+udocker --allow-root install
+```
+
+#### Create related folders
+
+```{bash}
+mkdir -p ${temp_dir} ${to_bcf} ${mocha} ${phasing} ${phasing_by_chrs} ${plots} logs ${analysis_dir}
+```
+
+```{bash}
+ls ${pre_phasing_data_dir}  ## verify the availability of pre-generated phased by chromosome bcf files
+```
+
+### Converting GenomeStudio CNV table to VCF
+
+#### Create bash script to_vcf.sh
+
+```{bash}
+echo -e "bcftools +gtc2vcf --no-version -Ou --genome-studio ${genome_studio_file} -f ${ref} | \
+         bcftools sort -Ou -T ${temp_dir} |\
+         bcftools norm --no-version -Ob -o ${to_bcf}/samples.bcf -c x -f ${ref}; \
+         bcftools index -f ${to_bcf}/samples.bcf -o ${to_bcf}/samples.bcf.csi" >${analysis_dir}/to_vcf.sh
+```
+
+#### Run to_vcf.sh
+Take about 2 mins to finish
+
+```{bash}
+udocker --allow-root run -v /content/ us.gcr.io/mccarroll-mocha/bcftools:1.16-20221221 bash ${analysis_dir}/to_vcf.sh
+```
+
+#### Check the output files from "to_vcf.sh"
+
+```{bash}
+ls ${to_bcf}
+```
+
+### 3. Phasing using EAGLE2
+
+#### Create bash script "phasing.sh"
+
+```{bash}
+echo -e "chr=\$1; \
+         eagle --geneticMapFile $maps \
+               --outPrefix ${phasing_by_chrs}/samples.chr${chr} \
+               --vcfRef ${kgp_pfx}${chr}${kgp_sfx}.bcf \
+               --vcfTarget ${to_bcf}/samples.bcf \
+               --vcfOutFormat b \
+               --noImpMissing \
+               --outputUnphased \
+               --chrom $chr \
+               --pbwtIters 3 && \
+         bcftools index -f ${phasing_by_chrs}/samples.chr$chr.bcf" > ${analysis_dir}/phasing.sh
+```
+
+#### Run "phasing.sh"
+The phasing step takes about 33 mins to complete
+We will not run this step during the practical seesion.  Instead, we copy the pre-generated phased.bcf to the phasing/by_chrs directory.  Freel free to explore the phasing code on your own time if you're interested
+
+```{bash}
+#for chr in {1..22} X; do
+#   echo ${chr}
+#   udocker --allow-root run -v /content/ us.gcr.io/mccarroll-mocha/eagle:1.16-20221221 bash ${analysis_dir}/phasing.sh ${chr}
+#done
+
+cp ${pre_phasing_data_dir}/*bcf* ${phasing_by_chrs}
+```
+
+#### check results under phasing/by_chrs/
+- Expecting files: samples.chr1.bcf...samples.chr22.bcf, and samples.chrX.bcf.csi
+
+```{bash}
+ls ${phasing_by_chrs}
+```
+
+### 4. Concatenating phased output into a single VCF file
+
+#### Create bash script "concat.sh"
+
+```{bash}
+echo -e "bcftools concat --no-version -Ob ${phasing_by_chrs}/samples.chr{{1..22},X}.bcf | \
+         tee ${phasing}/samples.pgt.bcf | \
+         bcftools index --force --output ${phasing}/samples.pgt.bcf.csi" > ${analysis_dir}/concat.sh
+```
+
+#### Run "concat.sh"
+
+```{bash}
+udocker --allow-root run -v /content/ us.gcr.io/mccarroll-mocha/bcftools:1.16-20221221 bash ${analysis_dir}/concat.sh
+```
+
+#### check results under phasing/
+
+- Expecting files: samples.pgt.bcf and samples.pgt.bcf.csi
+
+```{bash}
+ls ${phasing}
+```
+
+### 5. mCA detection using MoChA on phased VCF
+
+#### Create bash script "mocha.sh"
+
+```{bash}
+echo -e "bcftools +mocha \
+            --genome ${rule} \
+            --no-version \
+            --output ${mocha}/samples.as.bcf \
+            --output-type b \
+            --calls ${mocha}/samples.calls.tsv \
+            --stats ${mocha}/samples.stats.tsv \
+            --ucsc-bed ${mocha}/samples.ucsc.bed \
+            --cnp ${cnp} \
+            --mhc ${mhc_reg} \
+            --kir ${kir_reg} \
+            ${phasing}/samples.pgt.bcf; \
+         bcftools index --force ${mocha}/samples.as.bcf --output ${mocha}/samples.as.bcf.csi" > ${analysis_dir}/mocha.sh
+```
+
+#### Run "mocha.sh"
+
+Take < 1 mins to complete
+
+```{bash}
+udocker --allow-root run -v /content/ us.gcr.io/mccarroll-mocha/bcftools:1.16-20221221 bash ${analysis_dir}/mocha.sh
+```
+
+#### check results under mocha/
+- Expecting files: samples.calls.tsv, samples.stats.tsv,..,samples.as.bcf
+
+```{bash}
+ls ${mocha}
+```
+
+#### Display mocha calls
+
+```{bash}
+cat ${mocha}/samples.calls.tsv
+```
+
+### 6. plotting mCAs
+
+#### Before running this script, we need to install bcftools in the path
+##### Take about 3 mins to complete
+
+```{bash}
+wget https://github.com/samtools/bcftools/releases/download/1.18/bcftools-1.18.tar.bz2 && \
+     tar --bzip2 -xf bcftools-1.18.tar.bz2 && \
+     cd bcftools-1.18 && \
+     make && \
+     make  install
+```
+
+```{bash}
+bcftools --version
+```
+
+#### Install R libraries
+##### Take about 2 mins to complete
+
+```{r}
+install.packages("optparse")
+install.packages("reshape2")
+```
+
+#### generate 5 mCA plots
+##### Take < 1 mins to complete
+
+```{bash}
+Rscript /content/drive/MyDrive/statgen_workshop_mosaicism/bin/mocha_plot.12.21.22.R \
+  --mocha \
+  --stats mocha/samples.stats.tsv \
+  --vcf mocha/samples.as.bcf \
+  --png plots/S5.png \
+  --samples S5 \
+  --regions 11:0-47350287 \
+  --cytoband $cyto
+
+Rscript /content/drive/MyDrive/statgen_workshop_mosaicism/bin/mocha_plot.12.21.22.R \
+  --mocha \
+  --stats mocha/samples.stats.tsv \
+  --vcf mocha/samples.as.bcf \
+  --png plots/S8.png \
+  --samples S8 \
+  --regions 9:0-33487198 \
+  --cytoband $cyto
+
+Rscript /content/drive/MyDrive/statgen_workshop_mosaicism/bin/mocha_plot.12.21.22.R \
+  --mocha \
+  --stats mocha/samples.stats.tsv \
+  --vcf mocha/samples.as.bcf \
+  --png plots/S9.png \
+  --samples S9 \
+  --regions 13:32064883-54917256 \
+  --cytoband $cyto
+
+Rscript /content/drive/MyDrive/statgen_workshop_mosaicism/bin/mocha_plot.12.21.22.R \
+  --mocha \
+  --stats mocha/samples.stats.tsv \
+  --vcf mocha/samples.as.bcf \
+  --png plots/S10.png \
+  --samples S10 \
+  --regions 20:31144462-63025520 \
+  --cytoband $cyto
+
+Rscript /content/drive/MyDrive/statgen_workshop_mosaicism/bin/mocha_plot.12.21.22.R \
+  --mocha \
+  --stats mocha/samples.stats.tsv \
+  --vcf mocha/samples.as.bcf \
+  --png plots/S6.png \
+  --samples S6 \
+  --regions 10:84111105-85108139 \
+  --cytoband $cyto
+```
+
+#### Check generated plots under plots/
+
+```{bash}
+ls ${plots}
+```
+
+#### Display mCA plots
+
+##### Constitutional duplication on chr10
+- abnormal cell fractions = 73%; characterized by e^LRR > 1; AB BAF band splits to 2
+
+```{python}
+from IPython.display import Image, display
+display(Image(filename='/content/plots/S6.png', width=600, height=600))
+```
+
+##### Mosaic deletion on chr13
+- abnormal cell fractions = 20.3%; characterized by e^LRR < 1; AB BAF band splits to 2
+
+```{python}
+from IPython.display import Image, display
+display(Image(filename='/content/plots/S9.png', width=600, height=600))
+```
+
+##### Three mCAs on chr9p
+
+- blue: CNLOH in 40.87% cells: characterized by e^LRR ~ 1; AB BAF band splits to 2
+- green: CNLOH in 15.21% cells:
+- orange: Deletion in 13.82% cells: characterized by e^LRR < 1; AB BAF band splits to 2
+
+```{python}
+from IPython.display import Image, display
+display(Image(filename='/content/plots/S8.png', width=600, height=600))
+```
+
+### 7. Circos plot to illustrating autosomal mCAs categorizes as Gain, CNLOH, and Loss
+
+##### First, we need to install circos software, we will use the circos docker image
+
+```{bash}
+udocker --allow-root run  alexcoppe/circos:0.69-6 -v
+```
+
+##### Set path variables for circos plot
+
+```{python}
+import os
+analysis_dir="/content/08_analysis/"
+circos_conf="/content/drive/MyDrive/statgen_workshop_mosaicism/circos/circos.conf"
+ideogram_conf="/content/drive/MyDrive/statgen_workshop_mosaicism/circos/ideogram.conf"
+ticks_conf="/content/drive/MyDrive/statgen_workshop_mosaicism/circos/ticks.conf"
+mCAs="/content/drive/MyDrive/statgen_workshop_mosaicism/circos/mCAs.txt"
+circos="/content/circos/"
+os.environ['analysis_dir']=analysis_dir
+os.environ['circos_conf']=circos_conf
+os.environ['ideogram_conf']=ideogram_conf
+os.environ['ticks_conf']=ticks_conf
+os.environ['mCAs']=mCAs
+os.environ['circos']=circos
+```
+
+##### Copy required circos files to the circos folder
+
+```{bash}
+mkdir -p ${circos};
+cp ${circos_conf} ${circos}
+cp ${ideogram_conf} ${circos}
+cp ${ticks_conf} ${circos}
+```
+
+##### Lets take a look the mCA file for the circos plot
+
+```{bash}
+cat $mCAs
+```
+
+##### Sort by chrom (column #3) and start pos (column #4) of mCAs.txt; both numerics
+
+```{bash}
+sed 1d ${mCAs} |sort -k3,3n -k4,4n > ${circos}/events.txt
+```
+
+```{bash}
+cat ${circos}/events.txt
+```
+
+##### Extract chrom (#3), start (#4), end ($5), and mCA type (type_FINAL, #21)
+
+```{bash}
+cut -f3,4,5,21 ${circos}/events.txt > ${circos}/events_all.txt
+cat ${circos}/events_all.txt
+```
+
+##### Generates three tile files for the Gain, CNLOH, and Loss
+Then run circos software to generate the circos plot
+
+```{bash}
+
+grep "Gain"    ${circos}/events_all.txt |cut -f1-3 -d$'\t' |sed -e 's,^,hs,g' |sort -nr >   ${circos}/gain.tile
+grep "Loss"    ${circos}/events_all.txt |cut -f1-3 -d$'\t' |sed -e 's,^,hs,g' |sort -nr >   ${circos}/loss.tile
+grep "CN-LOH"  ${circos}/events_all.txt |cut -f1-3 -d$'\t' |sed -e 's,^,hs,g' |sort -nr >   ${circos}/neutral.tile
+
+udocker --allow-root run -v /content alexcoppe/circos:0.69-6  -conf ${circos_conf}
+```
+
+##### Check all the files under circos/
+It should contains the circos plot "mosaic.png"
+
+```{bash}
+ls /content/circos
+```
+
+####  Disploy the circos plot
+- Green: mosaic gain
+- Blue: mosaic CNLOH
+- Red: mosaic loss
+
+```{python}
+from IPython.display import Image, display
+display(Image(filename='/content/circos/mosaic.png', width=600, height=600))
+```
+
