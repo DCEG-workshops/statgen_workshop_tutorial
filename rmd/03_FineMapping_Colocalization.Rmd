@@ -3,6 +3,11 @@ title: "Finemappingandcolocalization"
 output: html_document
 ---
 
+<!-- TODO
+- `input_dir`: Update `/content/drive/MyDrive/statgen_workshop/data/workshop3/` to real data path
+- `analysis_dir` is already set to `$(pwd)/03_analysis/` which is portable — no change needed
+-->
+
 ## **Overview**
 
 In this exercise, first we will be using fine-mapping (SuSiE) to identify the potential set of "statistically" causal variants in a particular region. Then we will use colocalization to evaluate whether a GWAS signal and eQTL association are driven by the same causal variant. We will go over two examples of this.
@@ -19,8 +24,8 @@ When you import the drive, your google will popup a security alert. Be sure to g
 
 Now we can look at the contents of the drive using the list (ls) command and verify the drive is added to "MyDrive"
 
-```{python}
-!ls /content/drive/MyDrive/statgen_workshop/data/workshop3/
+```{bash}
+ls /content/drive/MyDrive/statgen_workshop/data/workshop3/
 ```
 
 Load R magic, so that we can run R here and share variables

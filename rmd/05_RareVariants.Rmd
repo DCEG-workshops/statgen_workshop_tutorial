@@ -3,6 +3,13 @@ title: "Rarevariants"
 output: html_document
 ---
 
+<!-- TODO
+- Line ~22: `udocker load -i /content/drive/MyDrive/statgen_workshop/containers/staarpipeline.tar` — update path to staarpipeline.tar, or replace with `udocker pull zilinli/staarpipeline:0.9.7` if pulling from Docker Hub is acceptable
+- Lines ~63,82,106: `udocker run -v /content/` — replace `/content/` with the actual working directory path (e.g., `$(pwd)` or an absolute path)
+- udocker is a Colab workaround for Docker. If running on a system with Docker available, replace `udocker --allow-root` with `docker`
+- Script paths inside udocker (e.g., `/content/statgen_workshop_tutorial/...`) reference Colab paths mounted into the container — update to match the new volume mount path
+-->
+
 ## Rare Variant analysis using STAAR pipeline
 
 ***Install [udocker](https://indigo-dc.github.io/udocker/)***: this allows us to run docker containers in colab. Unfortunately Docker cannot be installed on Google colab.
@@ -41,20 +48,20 @@ Let's clone the statgen workshop tutorial GitHub repo
 git clone https://github.com/DCEG-workshops/statgen_workshop_tutorial.git
 ```
 
-```{python}
-!ls /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/
+```{bash}
+ls /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/
 ```
 
 Create the analysis directory on the VM
 
-```{python}
-!mkdir /content/analysis_dir05/
+```{bash}
+mkdir -p /content/analysis_dir05/
 ```
 
 We will run the first step, which is to prepare for the 1000 genomes files to be used by the STAAR pipeline.
 
-```{python}
-!cat /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Association_Analysis_PreStep_1kG.r
+```{bash}
+cat /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Association_Analysis_PreStep_1kG.r
 ```
 
 Note that if you did not load the Docker image in the previous step, it would pull it from Docker hub now and may take a long time (10+ minutes). If the Docker image has been loaded from the tar file, this step takes about 2 minutes.
@@ -66,14 +73,14 @@ udocker --allow-root  run -v /content/ zilinli/staarpipeline:0.9.7 \
 
 Let's see if the output files are there
 
-```{python}
-!ls -l /content/analysis_dir05/
+```{bash}
+ls -l /content/analysis_dir05/
 ```
 
 Next step is to simuate the phenotype for analysis
 
-```{python}
-!cat /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Example_Simulated_Phenotype.R
+```{bash}
+cat /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Example_Simulated_Phenotype.R
 ```
 
 Let's run the simulation script, this should take < 3 minutes
@@ -85,14 +92,14 @@ udocker --allow-root  run -v /content/ zilinli/staarpipeline:0.9.7 \
 
 Is the phenotype file generated?
 
-```{python}
-!ls -l /content/analysis_dir05/
+```{bash}
+ls -l /content/analysis_dir05/
 ```
 
 Finally, we are ready to run the STAAR pipeline
 
-```{python}
-!cat /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Examples_STAARpipeline.R
+```{bash}
+cat /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Examples_STAARpipeline.R
 ```
 
 Let's run it, this is going to take ~ 12 minutes.  We could use this time to go over the preprocessing steps for 1000 genomes data

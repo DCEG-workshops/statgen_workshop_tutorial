@@ -3,6 +3,11 @@ title: "Heritability Prs"
 output: html_document
 ---
 
+<!-- TODO
+- `input_dir` (line ~15): `drive/MyDrive/statgen_workshop_04Heritability_PRS/` is an incomplete Colab path — update to real data path
+- `analysis_dir` is already set to `$(pwd)/04_analysis/` which is portable — no change needed
+-->
+
 # Set up Google Drive
 
 ***Important***: We want to mount the *google drive* for the data neeed for this workshop. Note that this folder is different from previous lectures. Please open this [link](https://drive.google.com/drive/folders/13RlwRIlLmXFeWxB1elz6srb5Eip5HyAU?usp=sharing) with your Google drive and find the "statgen_workshop_04Heritability_PRS" folder under "Share with me". Then add a shortcut to the folder under "My Drive".
@@ -26,8 +31,8 @@ load R magic, so that we can run R here and share variables
 
 Install conda in colab
 
-```{python}
-!conda --version
+```{bash}
+conda --version
 ```
 
 Let's install gcta conda environment, this takes about 2 minutes
@@ -47,9 +52,8 @@ Causal SNPs proportion: 5%
 
 Step 1, Compute the Genetic relationship matrix (GRM)
 
-```{python}
-!mkdir /content/04_analysis/
-!mkdir /content/04_analysis/result/
+```{bash}
+mkdir -p ${analysis_dir}/result/
 ```
 
 ```{r}

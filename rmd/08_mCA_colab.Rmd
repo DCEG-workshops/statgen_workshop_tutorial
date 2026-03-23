@@ -3,6 +3,17 @@ title: "Mca Colab"
 output: html_document
 ---
 
+<!-- TODO
+- ALL path variables in the first bash chunk (lines ~15-32) use hard-coded `/content/` and `/content/drive/MyDrive/statgen_workshop_mosaicism/` paths. Update all of:
+  - `analysis_dir`, `temp_dir`, `to_bcf`, `phasing`, `phasing_by_chrs`, `mocha`, `plots`, `circos` — set to real working directory paths
+  - `ref`, `genome_studio_file`, `maps`, `kgp_pfx`, `cnp`, `cyto`, `pre_phasing_data_dir` — set to real input data paths
+- ALL `udocker run -v /content/` commands: replace `/content/` with real working directory
+- `Rscript /content/drive/MyDrive/statgen_workshop_mosaicism/bin/mocha_plot.12.21.22.R` (lines ~209,218,227,236,245): Update to real path for mocha_plot R script
+- Second bash chunk with path variables (lines ~300-306): Same path updates as above
+- `ls /content/circos` (line ~357): Will be fixed automatically by using `${circos}` variable, but update the variable itself
+- udocker is a Colab workaround. If Docker is available, replace `udocker --allow-root` with `docker`
+-->
+
 ## Genetic mosaicism practical
 
 ### 1. Set Up
@@ -263,17 +274,15 @@ ls ${plots}
 ##### Constitutional duplication on chr10
 - abnormal cell fractions = 73%; characterized by e^LRR > 1; AB BAF band splits to 2
 
-```{python}
-from IPython.display import Image, display
-display(Image(filename='/content/plots/S6.png', width=600, height=600))
+```{r, out.width="600px"}
+knitr::include_graphics(paste0(Sys.getenv("plots"), "S6.png"))
 ```
 
 ##### Mosaic deletion on chr13
 - abnormal cell fractions = 20.3%; characterized by e^LRR < 1; AB BAF band splits to 2
 
-```{python}
-from IPython.display import Image, display
-display(Image(filename='/content/plots/S9.png', width=600, height=600))
+```{r, out.width="600px"}
+knitr::include_graphics(paste0(Sys.getenv("plots"), "S9.png"))
 ```
 
 ##### Three mCAs on chr9p
@@ -282,9 +291,8 @@ display(Image(filename='/content/plots/S9.png', width=600, height=600))
 - green: CNLOH in 15.21% cells:
 - orange: Deletion in 13.82% cells: characterized by e^LRR < 1; AB BAF band splits to 2
 
-```{python}
-from IPython.display import Image, display
-display(Image(filename='/content/plots/S8.png', width=600, height=600))
+```{r, out.width="600px"}
+knitr::include_graphics(paste0(Sys.getenv("plots"), "S8.png"))
 ```
 
 ### 7. Circos plot to illustrating autosomal mCAs categorizes as Gain, CNLOH, and Loss
@@ -354,7 +362,7 @@ udocker --allow-root run -v /content alexcoppe/circos:0.69-6  -conf ${circos_con
 It should contains the circos plot "mosaic.png"
 
 ```{bash}
-ls /content/circos
+ls ${circos}
 ```
 
 ####  Disploy the circos plot
@@ -362,8 +370,7 @@ ls /content/circos
 - Blue: mosaic CNLOH
 - Red: mosaic loss
 
-```{python}
-from IPython.display import Image, display
-display(Image(filename='/content/circos/mosaic.png', width=600, height=600))
+```{r, out.width="600px"}
+knitr::include_graphics(paste0(Sys.getenv("circos"), "mosaic.png"))
 ```
 

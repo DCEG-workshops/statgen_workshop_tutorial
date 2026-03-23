@@ -3,6 +3,14 @@ title: "Multi Ancestry Analysis"
 output: html_document
 ---
 
+<!-- TODO
+- `input_dir` (line ~9): `drive/MyDrive/statgen_workshop/data/workshop7/` is an incomplete Colab path (missing `/content/` prefix) — update to real data path
+- `analysis_dir` is already set to `$(pwd)/07_analysis/` which is portable — no change needed
+- `cp /content/drive/MyDrive/statgen_workshop/tools/07_multi_ancestry_analysis_R_libs.tgz ./` (line ~39): Update path to the pre-built library tarball, or install packages directly
+- `system(paste0("/content/MsCAVIAR//MsCAVIAR ..."))` (line ~344): Update `/content/MsCAVIAR/` to real path where MsCAVIAR binary is installed
+- Commented-out `# python /content/PRScsx/PRScsx.py` (line ~407): If activating this, update to real path for PRScsx.py
+-->
+
 # Set up
 
 ```{bash}

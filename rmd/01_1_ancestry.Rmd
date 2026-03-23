@@ -3,6 +3,10 @@ title: "Ancestry"
 output: html_document
 ---
 
+<!-- TODO
+- Line ~128: Commented-out path `/content/drive/MyDrive/` — update to real output path if you want to save results
+-->
+
 # Overview
 In this exercise, we want to infer the ancestry of our samples. We can do this manually like what is shown in 01_qc.ipynb. But it it may be easier to use tools that are designed to do this, such as [ADMIXTURE](https://dalexander.github.io/admixture/), [STRUCTURE](https://web.stanford.edu/group/pritchardlab/structure.html) and [GrafPop](https://www.ncbi.nlm.nih.gov/projects/gap/cgi-bin/GrafPop_README.html). We will be using GrafPop here
 
@@ -122,10 +126,8 @@ grep -v European ${analysis_dir}/penncath_grafPop_ancestry.txt
 ## save your analysis folder
 Your current working directory ${analysis_dir} is on the runtime environment and is ephemeral. If you like to save the analysis files to your google drive. Or go to the Files tab and download them to your local drive.
 
-```{python}
-# @title
-%%bash
-#cp -r ${analysis_dir} /content/drive/MyDrive/
+```{bash}
+#cp -r ${analysis_dir} /YOUR/OUTPUT/PATH/
 ```
 
 ## save your notebook

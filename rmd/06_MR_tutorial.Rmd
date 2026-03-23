@@ -3,6 +3,12 @@ title: "Mr Tutorial"
 output: html_document
 ---
 
+<!-- TODO
+- `analysis_dir` (line ~17): Update `/content/06_analysis/` to real working directory
+- `input_dir` (line ~18): Update `/content/drive/MyDrive/statgen_workshop/data/workshop6/data/MR/` to real data path
+- `cp /content/drive/MyDrive/statgen_workshop/tools/TwoSampleMR_libs.tgz ./`: Update path to the pre-built TwoSampleMR library tarball, or replace with `devtools::install_github("MRCIEU/TwoSampleMR")` in an R chunk (slow but portable)
+-->
+
 # Mendelian randomization practical
 
 We demonstrate how to conduct two-sample Mendelian randomization analyses using the R package `TwoSampleMR` to estimate the causal effect of body mass index (BMI) on coronary heart disease (CHD).
@@ -22,8 +28,8 @@ export input_dir="/content/drive/MyDrive/statgen_workshop/data/workshop6/data/MR
 
 Install a dependency for the `TwoSampleMR` package
 
-```{python}
-!apt install libgmp-dev
+```{bash}
+apt install libgmp-dev
 ```
 
 Normally we want to install the `TwoSampleMR` package by using devtools in R:
@@ -41,8 +47,8 @@ cp /content/drive/MyDrive/statgen_workshop/tools/TwoSampleMR_libs.tgz ./
 tar -zxvf TwoSampleMR_libs.tgz
 ```
 
-```{python}
-!ls usr/local/lib/R/site-library/
+```{bash}
+ls usr/local/lib/R/site-library/
 ```
 
 Add to R library Path

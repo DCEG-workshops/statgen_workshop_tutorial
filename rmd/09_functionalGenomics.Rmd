@@ -3,12 +3,21 @@ title: "Functionalgenomics"
 output: html_document
 ---
 
+<!-- TODO
+- `analysis_dir` (line ~17): Update `/content/09_analysis/` to real working directory
+- `input_dir` (line ~18): Update `/content/drive/MyDrive/statgen_workshop/data/workshop9` to real data path
+- igv_notebook chunk (lines ~117-139): `igv_notebook` is a Python-only Jupyter widget and cannot run interactively in Rmd. Options:
+  (a) Use the R package `igvR` as a replacement
+  (b) Replace with a static image using `knitr::include_graphics()` of a pre-generated screenshot
+  (c) Keep as a Python chunk with a note that it only works in Jupyter/Colab
+-->
+
 # Set up
 
 Let's look at the input data directory
 
-```{python}
-!ls /content/drive/MyDrive/statgen_workshop/data/workshop9
+```{bash}
+ls /content/drive/MyDrive/statgen_workshop/data/workshop9
 ```
 
 Set up the path variables
@@ -26,14 +35,14 @@ git clone https://github.com/DCEG-workshops/statgen_workshop_tutorial.git
 
 Let's install cutadapt
 
-```{python}
-!pip install cutadapt
+```{bash}
+pip install cutadapt
 ```
 
 See if we can run cutadapt
 
-```{python}
-!cutadapt
+```{bash}
+cutadapt
 ```
 
 Let's install minimap2
@@ -45,8 +54,8 @@ cd minimap2 && make
 
 See if we can run minimap2
 
-```{python}
-! ./minimap2/minimap2
+```{bash}
+./minimap2/minimap2
 ```
 
 Let's install samtools
@@ -62,14 +71,14 @@ wget https://github.com/samtools/samtools/releases/download/1.17/samtools-1.17.t
 
 See if we can run samtools
 
-```{python}
-! ./samtools-1.17/samtools
+```{bash}
+./samtools-1.17/samtools
 ```
 
 Add minimap2 and samtools executables to the PATH
 
-```{python}
-os.environ['PATH'] += ":/content/samtools-1.17/:/content/minimap2"
+```{bash}
+export PATH=$PATH:$(pwd)/samtools-1.17/:$(pwd)/minimap2
 ```
 
 # Extract regions from the assemblies
@@ -96,8 +105,8 @@ ls ${analysis_dir}/retrievedRegions/hg38_chr1_109655000_109742000/fasta_files/
 
 Take a look at script 2
 
-```{python}
-!cat statgen_workshop_tutorial/src/09_functionalGenomics/script2_toAlignFastaToReference_HPRC_DCEG_GSTM.sh
+```{bash}
+cat statgen_workshop_tutorial/src/09_functionalGenomics/script2_toAlignFastaToReference_HPRC_DCEG_GSTM.sh
 ```
 
 Run script 2
@@ -108,8 +117,8 @@ bash statgen_workshop_tutorial/src/09_functionalGenomics/script2_toAlignFastaToR
 
 Is the bam generated?
 
-```{python}
-! ls /content/09_analysis//retrievedRegions/hg38_chr1_109655000_109742000/bam_files/HPRC.cb.bam
+```{bash}
+ls ${analysis_dir}/retrievedRegions/hg38_chr1_109655000_109742000/bam_files/HPRC.cb.bam
 ```
 
 let's use igv to visualize it, first we will install igv-notebook

@@ -3,6 +3,13 @@ title: "Gwasandmetaanalysis"
 output: html_document
 ---
 
+<!-- TODO
+- `input_dir` export: Update `/content/drive/MyDrive/statgen_workshop` to real data path
+- `analysis_dir` export: Update `/content/02_analysis/` to real working directory
+- Line with `cp -r ${analysis_dir} /content/drive/MyDrive/`: Update output path or remove
+- Metasoft.jar: Ensure `./Metasoft.jar` is present in the working directory, or update path
+-->
+
 # Overview
 
 In this exercise, we will be using [plink](www.cog-genomics.org/plink/1.9/) to perform Genome Wide Association Studies using the publicly available PennCath data.  First, we will evaluate the data with a continous outcome using **linear regression** and covariates estimated from the --pca step in last lecture. Then, we will evaluate our results using **Quantile-Quantile Plots** (QQplots), **Manhattan plots**, and **Regional plots** for follow-up.  We will also perform another GWAS using the binary trait Coronary Artery Disease (CAD) and **logistic regression** which is often what we use when evaluating germline genetic susceptibility to cancer.
@@ -16,8 +23,8 @@ When you import the drive, your google will popup a security alert. Be sure to g
 
 Now we can look at the contents of the drive using the list (ls) command and verify the drive is added to "MyDrive"
 
-```{python}
-!ls /content/drive/MyDrive/statgen_workshop
+```{bash}
+ls /content/drive/MyDrive/statgen_workshop
 ```
 
 We will set path variables to simplify our coding to not require the full drive path for the input and output datasets. I will show some examples with the full path so you can see both.
@@ -277,12 +284,12 @@ We will use metasoft for the meta-analysis.  Metasoft inputs and options are des
 
 We first need to verify java is available as Metasoft is coded in java.
 
-```{python}
-!java -version
+```{bash}
+java -version
 ```
 
-```{python}
-!ls ~/
+```{bash}
+ls ~/
 ```
 
 Now, we have already downloaded Metasoft from the [web](http://genetics.cs.ucla.edu/meta/repository/2.0.1/Metasoft.zip) and put it under the tools directory in the shared drive.
@@ -301,8 +308,8 @@ cp ${tools_dir}/Metasoft.jar ./
 
 The command below checks that we are able to run Java.  The "-help" command also indicates how to use Metasoft and the options available.
 
-```{python}
-!java -jar ./Metasoft.jar -help
+```{bash}
+java -jar ./Metasoft.jar -help
 ```
 
 #Meta-Analysis Inputs
@@ -323,8 +330,8 @@ head ./bcac2.txt
 # BCAC Meta-Analysis in Metasoft
 Here we will run a meta-analysis using all the default options.  Metasoft automatically gives us the pvalue results of Fixed Effects, Random Effects, Binary Effects, etc. without any additional coding specifications.
 
-```{python}
-!java -jar ./Metasoft.jar -input bcac2.txt
+```{bash}
+java -jar ./Metasoft.jar -input bcac2.txt
 ```
 
 Let's take a peak at our results
