@@ -4,12 +4,13 @@ output: html_document
 ---
 
 <!-- TODO
-- `analysis_dir` (line ~17): Update `/content/09_analysis/` to real working directory
-- `input_dir` (line ~18): Update `/content/drive/MyDrive/statgen_workshop/data/workshop9` to real data path
+- `input_dir` (line ~18): Update `/content/drive/MyDrive/statgen_workshop/data/workshop9` to real Biowulf data path
+- `ls /content/drive/MyDrive/...` (line ~20): Update to use `${input_dir}` after path is set, or reorder chunks
 - igv_notebook chunk (lines ~117-139): `igv_notebook` is a Python-only Jupyter widget and cannot run interactively in Rmd. Options:
   (a) Use the R package `igvR` as a replacement
   (b) Replace with a static image using `knitr::include_graphics()` of a pre-generated screenshot
   (c) Keep as a Python chunk with a note that it only works in Jupyter/Colab
+- BAM paths inside igv_notebook Python chunk reference `/content/09_analysis/` — update to match `analysis_dir`
 -->
 
 # Set up
@@ -23,7 +24,7 @@ ls /content/drive/MyDrive/statgen_workshop/data/workshop9
 Set up the path variables
 
 ```{bash}
-export analysis_dir="/content/09_analysis/"
+export analysis_dir="$(pwd)/09_analysis/"
 export input_dir="/content/drive/MyDrive/statgen_workshop/data/workshop9"
 ```
 
@@ -123,7 +124,7 @@ ls ${analysis_dir}/retrievedRegions/hg38_chr1_109655000_109742000/bam_files/HPRC
 
 let's use igv to visualize it, first we will install igv-notebook
 
-```{python}
+```{bash}
 pip install igv-notebook
 ```
 

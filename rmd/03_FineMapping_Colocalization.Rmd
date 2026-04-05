@@ -4,8 +4,9 @@ output: html_document
 ---
 
 <!-- TODO
-- `input_dir`: Update `/content/drive/MyDrive/statgen_workshop/data/workshop3/` to real data path
-- `analysis_dir` is already set to `$(pwd)/03_analysis/` which is portable — no change needed
+- `input_dir` (line ~36): Update `/content/drive/MyDrive/statgen_workshop/data/workshop3/` to real Biowulf data path
+- `ls /content/drive/MyDrive/...` (line ~28): Update to `ls ${input_dir}` or reorder after variable is set
+- Google Drive mount instructions in prose: Update to reflect Biowulf data setup
 -->
 
 ## **Overview**

@@ -4,8 +4,9 @@ output: html_document
 ---
 
 <!-- TODO
-- `input_dir` (line ~15): `drive/MyDrive/statgen_workshop_04Heritability_PRS/` is an incomplete Colab path — update to real data path
-- `analysis_dir` is already set to `$(pwd)/04_analysis/` which is portable — no change needed
+- `input_dir` (line ~20): `drive/MyDrive/statgen_workshop_04Heritability_PRS/` is a Colab path — update to real Biowulf data path
+- Google Drive mount instructions in prose (line ~13): Update to reflect Biowulf data setup
+- `conda install` commands: On Biowulf, use `module load` for gcta, plink, plink2, ldsc if available
 -->
 
 # Set up Google Drive

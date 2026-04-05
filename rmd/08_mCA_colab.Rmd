@@ -4,14 +4,12 @@ output: html_document
 ---
 
 <!-- TODO
-- ALL path variables in the first bash chunk (lines ~15-32) use hard-coded `/content/` and `/content/drive/MyDrive/statgen_workshop_mosaicism/` paths. Update all of:
-  - `analysis_dir`, `temp_dir`, `to_bcf`, `phasing`, `phasing_by_chrs`, `mocha`, `plots`, `circos` — set to real working directory paths
-  - `ref`, `genome_studio_file`, `maps`, `kgp_pfx`, `cnp`, `cyto`, `pre_phasing_data_dir` — set to real input data paths
-- ALL `udocker run -v /content/` commands: replace `/content/` with real working directory
-- `Rscript /content/drive/MyDrive/statgen_workshop_mosaicism/bin/mocha_plot.12.21.22.R` (lines ~209,218,227,236,245): Update to real path for mocha_plot R script
-- Second bash chunk with path variables (lines ~300-306): Same path updates as above
-- `ls /content/circos` (line ~357): Will be fixed automatically by using `${circos}` variable, but update the variable itself
-- udocker is a Colab workaround. If Docker is available, replace `udocker --allow-root` with `docker`
+- Input data paths still reference `/content/drive/MyDrive/statgen_workshop_mosaicism/` — update to real Biowulf data paths:
+  - `ref`, `genome_studio_file`, `maps`, `kgp_pfx`, `cnp`, `cyto`, `pre_phasing_data_dir` (lines ~27-34)
+  - `circos_conf`, `ideogram_conf`, `ticks_conf`, `mCAs` (lines ~310-313)
+- `Rscript /content/drive/MyDrive/statgen_workshop_mosaicism/bin/mocha_plot.12.21.22.R` (lines ~220,229,238,247,256): Update to real path for mocha_plot R script
+- udocker is a Colab workaround. On Biowulf, replace `udocker --allow-root` with `docker` or `singularity`
+- Google Drive mount instructions in prose (line ~21): Update to reflect Biowulf data setup
 -->
 
 ## Genetic mosaicism practical
@@ -23,7 +21,7 @@ output: html_document
 Set path variables
 
 ```{bash}
-export analysis_dir="/content/08_analysis/"
+export analysis_dir="$(pwd)/08_analysis/"
 export ref="/content/drive/MyDrive/statgen_workshop_mosaicism/ref_files/human_g1k_v37.fasta"
 export genome_studio_file="/content/drive/MyDrive/statgen_workshop_mosaicism/test_set/test_set1.txt"
 export maps="/content/drive/MyDrive/statgen_workshop_mosaicism/ref_files/genetic_map_hg19_withX.txt.gz"
@@ -35,12 +33,12 @@ export pre_phasing_data_dir="/content/drive/MyDrive/statgen_workshop_mosaicism/p
 export mhc_reg="6:27486711-33448264"
 export kir_reg="19:54574747-55504099"
 export rule="GRCh37"
-export temp_dir="/content/temp/"
-export to_bcf="/content/to_bcf/"
-export phasing="/content/phasing/"
-export phasing_by_chrs="/content/phasing/by_chrs/"
-export mocha="/content/mocha/"
-export plots="/content/plots/"
+export temp_dir="$(pwd)/temp/"
+export to_bcf="$(pwd)/to_bcf/"
+export phasing="$(pwd)/phasing/"
+export phasing_by_chrs="$(pwd)/phasing/by_chrs/"
+export mocha="$(pwd)/mocha/"
+export plots="$(pwd)/plots/"
 export chr="$chr"
 ```
 
@@ -76,7 +74,7 @@ echo -e "bcftools +gtc2vcf --no-version -Ou --genome-studio ${genome_studio_file
 Take about 2 mins to finish
 
 ```{bash}
-udocker --allow-root run -v /content/ us.gcr.io/mccarroll-mocha/bcftools:1.16-20221221 bash ${analysis_dir}/to_vcf.sh
+udocker --allow-root run -v $(pwd)/ us.gcr.io/mccarroll-mocha/bcftools:1.16-20221221 bash ${analysis_dir}/to_vcf.sh
 ```
 
 #### Check the output files from "to_vcf.sh"
@@ -110,7 +108,7 @@ We will not run this step during the practical seesion.  Instead, we copy the pr
 ```{bash}
 #for chr in {1..22} X; do
 #   echo ${chr}
-#   udocker --allow-root run -v /content/ us.gcr.io/mccarroll-mocha/eagle:1.16-20221221 bash ${analysis_dir}/phasing.sh ${chr}
+#   udocker --allow-root run -v $(pwd)/ us.gcr.io/mccarroll-mocha/eagle:1.16-20221221 bash ${analysis_dir}/phasing.sh ${chr}
 #done
 
 cp ${pre_phasing_data_dir}/*bcf* ${phasing_by_chrs}
@@ -136,7 +134,7 @@ echo -e "bcftools concat --no-version -Ob ${phasing_by_chrs}/samples.chr{{1..22}
 #### Run "concat.sh"
 
 ```{bash}
-udocker --allow-root run -v /content/ us.gcr.io/mccarroll-mocha/bcftools:1.16-20221221 bash ${analysis_dir}/concat.sh
+udocker --allow-root run -v $(pwd)/ us.gcr.io/mccarroll-mocha/bcftools:1.16-20221221 bash ${analysis_dir}/concat.sh
 ```
 
 #### check results under phasing/
@@ -172,7 +170,7 @@ echo -e "bcftools +mocha \
 Take < 1 mins to complete
 
 ```{bash}
-udocker --allow-root run -v /content/ us.gcr.io/mccarroll-mocha/bcftools:1.16-20221221 bash ${analysis_dir}/mocha.sh
+udocker --allow-root run -v $(pwd)/ us.gcr.io/mccarroll-mocha/bcftools:1.16-20221221 bash ${analysis_dir}/mocha.sh
 ```
 
 #### check results under mocha/
@@ -306,12 +304,12 @@ udocker --allow-root run  alexcoppe/circos:0.69-6 -v
 ##### Set path variables for circos plot
 
 ```{bash}
-export analysis_dir="/content/08_analysis/"
+export analysis_dir="$(pwd)/08_analysis/"
 export circos_conf="/content/drive/MyDrive/statgen_workshop_mosaicism/circos/circos.conf"
 export ideogram_conf="/content/drive/MyDrive/statgen_workshop_mosaicism/circos/ideogram.conf"
 export ticks_conf="/content/drive/MyDrive/statgen_workshop_mosaicism/circos/ticks.conf"
 export mCAs="/content/drive/MyDrive/statgen_workshop_mosaicism/circos/mCAs.txt"
-export circos="/content/circos/"
+export circos="$(pwd)/circos/"
 ```
 
 ##### Copy required circos files to the circos folder
@@ -355,7 +353,7 @@ grep "Gain"    ${circos}/events_all.txt |cut -f1-3 -d$'\t' |sed -e 's,^,hs,g' |s
 grep "Loss"    ${circos}/events_all.txt |cut -f1-3 -d$'\t' |sed -e 's,^,hs,g' |sort -nr >   ${circos}/loss.tile
 grep "CN-LOH"  ${circos}/events_all.txt |cut -f1-3 -d$'\t' |sed -e 's,^,hs,g' |sort -nr >   ${circos}/neutral.tile
 
-udocker --allow-root run -v /content alexcoppe/circos:0.69-6  -conf ${circos_conf}
+udocker --allow-root run -v $(pwd)alexcoppe/circos:0.69-6  -conf ${circos_conf}
 ```
 
 ##### Check all the files under circos/

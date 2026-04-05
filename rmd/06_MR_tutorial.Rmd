@@ -4,9 +4,10 @@ output: html_document
 ---
 
 <!-- TODO
-- `analysis_dir` (line ~17): Update `/content/06_analysis/` to real working directory
-- `input_dir` (line ~18): Update `/content/drive/MyDrive/statgen_workshop/data/workshop6/data/MR/` to real data path
+- `input_dir` (line ~18): Update `/content/drive/MyDrive/statgen_workshop/data/workshop6/data/MR/` to real Biowulf data path
 - `cp /content/drive/MyDrive/statgen_workshop/tools/TwoSampleMR_libs.tgz ./`: Update path to the pre-built TwoSampleMR library tarball, or replace with `devtools::install_github("MRCIEU/TwoSampleMR")` in an R chunk (slow but portable)
+- `apt install libgmp-dev` (line ~32): On Biowulf, use `module load` or pre-installed system libraries instead
+- Text on line ~39 references "Google colab" — update to reflect Biowulf environment
 -->
 
 # Mendelian randomization practical
@@ -20,7 +21,7 @@ This tutorial is adapted from materials provided by Gibran Hemani and Jie Zheng.
 Let's set some environmental variables
 
 ```{bash}
-export analysis_dir="/content/06_analysis/"
+export analysis_dir="$(pwd)/06_analysis/"
 export input_dir="/content/drive/MyDrive/statgen_workshop/data/workshop6/data/MR/"
 ```
 

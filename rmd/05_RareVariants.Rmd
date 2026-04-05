@@ -4,10 +4,9 @@ output: html_document
 ---
 
 <!-- TODO
-- Line ~22: `udocker load -i /content/drive/MyDrive/statgen_workshop/containers/staarpipeline.tar` — update path to staarpipeline.tar, or replace with `udocker pull zilinli/staarpipeline:0.9.7` if pulling from Docker Hub is acceptable
-- Lines ~63,82,106: `udocker run -v /content/` — replace `/content/` with the actual working directory path (e.g., `$(pwd)` or an absolute path)
-- udocker is a Colab workaround for Docker. If running on a system with Docker available, replace `udocker --allow-root` with `docker`
-- Script paths inside udocker (e.g., `/content/statgen_workshop_tutorial/...`) reference Colab paths mounted into the container — update to match the new volume mount path
+- Line ~22: `udocker load -i /content/drive/MyDrive/statgen_workshop/containers/staarpipeline.tar` — update path to staarpipeline.tar on Biowulf, or replace with `udocker pull zilinli/staarpipeline:0.9.7`
+- udocker is a Colab workaround for Docker. On Biowulf, Docker/Singularity may be available natively — replace `udocker --allow-root` with `docker` or `singularity`
+- `pip install udocker` (line ~18): May not be needed on Biowulf if Docker is available
 -->
 
 ## Rare Variant analysis using STAAR pipeline
@@ -49,57 +48,57 @@ git clone https://github.com/DCEG-workshops/statgen_workshop_tutorial.git
 ```
 
 ```{bash}
-ls /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/
+ls statgen_workshop_tutorial/src/05_RareVariants/1000G/
 ```
 
 Create the analysis directory on the VM
 
 ```{bash}
-mkdir -p /content/analysis_dir05/
+mkdir -p $(pwd)/analysis_dir05/
 ```
 
 We will run the first step, which is to prepare for the 1000 genomes files to be used by the STAAR pipeline.
 
 ```{bash}
-cat /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Association_Analysis_PreStep_1kG.r
+cat statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Association_Analysis_PreStep_1kG.r
 ```
 
 Note that if you did not load the Docker image in the previous step, it would pull it from Docker hub now and may take a long time (10+ minutes). If the Docker image has been loaded from the tar file, this step takes about 2 minutes.
 
 ```{bash}
-udocker --allow-root  run -v /content/ zilinli/staarpipeline:0.9.7 \
-        Rscript /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Association_Analysis_PreStep_1kG.r
+udocker --allow-root  run -v $(pwd)/ zilinli/staarpipeline:0.9.7 \
+        Rscript statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Association_Analysis_PreStep_1kG.r
 ```
 
 Let's see if the output files are there
 
 ```{bash}
-ls -l /content/analysis_dir05/
+ls -l $(pwd)/analysis_dir05/
 ```
 
 Next step is to simuate the phenotype for analysis
 
 ```{bash}
-cat /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Example_Simulated_Phenotype.R
+cat statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Example_Simulated_Phenotype.R
 ```
 
 Let's run the simulation script, this should take < 3 minutes
 
 ```{bash}
-udocker --allow-root  run -v /content/ zilinli/staarpipeline:0.9.7 \
-        Rscript /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Example_Simulated_Phenotype.R
+udocker --allow-root  run -v $(pwd)/ zilinli/staarpipeline:0.9.7 \
+        Rscript statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Example_Simulated_Phenotype.R
 ```
 
 Is the phenotype file generated?
 
 ```{bash}
-ls -l /content/analysis_dir05/
+ls -l $(pwd)/analysis_dir05/
 ```
 
 Finally, we are ready to run the STAAR pipeline
 
 ```{bash}
-cat /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Examples_STAARpipeline.R
+cat statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Examples_STAARpipeline.R
 ```
 
 Let's run it, this is going to take ~ 12 minutes.  We could use this time to go over the preprocessing steps for 1000 genomes data
@@ -110,7 +109,7 @@ The “errors" you see here correspond to the fact that the underlying variant s
 In STAARpipeline we used try() method to catch these errors without making the program to crash.
 
 ```{bash}
-udocker --allow-root  run -v /content/ zilinli/staarpipeline:0.9.7 \
-        Rscript /content/statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Examples_STAARpipeline.R
+udocker --allow-root  run -v $(pwd)/ zilinli/staarpipeline:0.9.7 \
+        Rscript statgen_workshop_tutorial/src/05_RareVariants/1000G/1000G_scripts_part2/Examples_STAARpipeline.R
 ```
 

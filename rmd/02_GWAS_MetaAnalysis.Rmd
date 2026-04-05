@@ -4,10 +4,10 @@ output: html_document
 ---
 
 <!-- TODO
-- `input_dir` export: Update `/content/drive/MyDrive/statgen_workshop` to real data path
-- `analysis_dir` export: Update `/content/02_analysis/` to real working directory
-- Line with `cp -r ${analysis_dir} /content/drive/MyDrive/`: Update output path or remove
+- `input_dir` and `tools_dir` exports (lines ~33,35): Update `drive/MyDrive/statgen_workshop/...` to real Biowulf data paths
+- `ls /content/drive/MyDrive/statgen_workshop` (line ~27): Update to `ls ${input_dir}` or remove
 - Metasoft.jar: Ensure `./Metasoft.jar` is present in the working directory, or update path
+- Google Drive mount instructions in prose: Update to reflect Biowulf data setup
 -->
 
 # Overview
@@ -133,7 +133,7 @@ head ${analysis_dir}/qt_result_maf0.05.linear.clean.txt
 Then we can read our file into R to do some plotting!
 
 ```{r}
-qt_result_maf05 <- read.table("drive/MyDrive/statgen_workshop/data/workshop2/qt_result_maf0.05.linear.clean.txt", header=F, as.is=T)
+qt_result_maf05 <- read.table(paste0(input_dir, "qt_result_maf0.05.linear.clean.txt"), header=F, as.is=T)
 colnames(qt_result_maf05)<-c("CHR", "SNP", "BP", "A1", "TEST", "NMISS", "OR", "SE", "L95", "U95", "STAT", "P")
 head(qt_result_maf05)
 ```
@@ -258,7 +258,7 @@ The dataset below includes additional variables you can use to practice your GWA
 head ${input_dir}/penncath_extradata.txt
 ```
 
-```{python}
+```{bash}
 #code block for Challenge 1
 ```
 
@@ -361,7 +361,7 @@ Just taking a peak at the first 10 lines doesn't give us enough information! Con
 Your current working directory ${analysis_dir} is on the runtime environment and is ephemeral. If you like to save the analysis files to your google drive. Or go to the Files tab and download them to your local drive.
 
 ```{bash}
-cp -r ${analysis_dir} /content/drive/MyDrive/
+# cp -r ${analysis_dir} /content/drive/MyDrive/  # Colab-specific: update output path for your environment
 ```
 
 ## save your notebook
