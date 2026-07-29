@@ -1,0 +1,56 @@
+diff --git a/cpp/BedFileSnpGeno.cpp b/cpp/BedFileSnpGeno.cpp
+index cae62ad..66aec92 100644
+--- a/cpp/BedFileSnpGeno.cpp
++++ b/cpp/BedFileSnpGeno.cpp
+@@ -36 +36 @@ BedFileSnpGeno::~BedFileSnpGeno()
+-        delete ancSnpSmpGenos[i];
++        delete[] ancSnpSmpGenos[i];
+@@ -170 +170 @@ bool BedFileSnpGeno::ReadGenotypesFromBedFile()
+-            delete snpGenoStr;
++            delete[] snpGenoStr;
+diff --git a/cpp/GrafAnc.cpp b/cpp/GrafAnc.cpp
+index 30a5ce0..6ce4912 100644
+--- a/cpp/GrafAnc.cpp
++++ b/cpp/GrafAnc.cpp
+@@ -284 +284 @@ int main(int argc, char* argv[])
+-    return 1;
++    return 0;
+diff --git a/cpp/SampleGenoAncestry.cpp b/cpp/SampleGenoAncestry.cpp
+index 36292ac..126378c 100644
+--- a/cpp/SampleGenoAncestry.cpp
++++ b/cpp/SampleGenoAncestry.cpp
+@@ -127 +126,0 @@ int SampleGenoAncestry::SaveAncestryResults(string outFile, bool isAppend)
+-        char line[512];
+@@ -129 +128 @@ int SampleGenoAncestry::SaveAncestryResults(string outFile, bool isAppend)
+-            sprintf(line, "%s\t%s\tGD1\tGD2\tGD3", "Sample", "SNPs");
++            fprintf(ifp, "Sample\tSNPs\tGD1\tGD2\tGD3");
+@@ -131,2 +130 @@ int SampleGenoAncestry::SaveAncestryResults(string outFile, bool isAppend)
+-                strcat(line, "\t");
+-                strcat(line, popScoreNames[i].c_str());
++                fprintf(ifp, "\t%s", popScoreNames[i].c_str());
+@@ -134,3 +132 @@ int SampleGenoAncestry::SaveAncestryResults(string outFile, bool isAppend)
+-            strcat(line, "\tPe\tPf\tPa\tRawPe\tRawPf\tRawPa\tAncGroupID");
+-
+-            fprintf(ifp, "%s\n", line);
++            fprintf(ifp, "\tPe\tPf\tPa\tRawPe\tRawPf\tRawPa\tAncGroupID\n");
+@@ -139,2 +135 @@ int SampleGenoAncestry::SaveAncestryResults(string outFile, bool isAppend)
+-        for (int i = 0; i < numSaveSmps; i++) {
+-            GenoSample smp = samples[i];
++        for (const GenoSample &smp : samples) {
+@@ -143 +138,2 @@ int SampleGenoAncestry::SaveAncestryResults(string outFile, bool isAppend)
+-            sprintf(line, "%s\t%d", smp.name.c_str(), smp.numAncSnps);
++            fprintf(ifp, "%s\t%d\t%7.6f\t%7.6f\t%7.6f",
++                    smp.name.c_str(), smp.numAncSnps, smp.gd1, smp.gd2, smp.gd3);
+@@ -145 +140,0 @@ int SampleGenoAncestry::SaveAncestryResults(string outFile, bool isAppend)
+-            sprintf(line, "%s\t%7.6f\t%7.6f\t%7.6f", line, smp.gd1, smp.gd2, smp.gd3);
+@@ -147 +142 @@ int SampleGenoAncestry::SaveAncestryResults(string outFile, bool isAppend)
+-                sprintf(line, "%s\t%7.6f", line, smp.subPopScores[i]);
++                fprintf(ifp, "\t%7.6f", smp.subPopScores[i]);
+@@ -149,4 +144,3 @@ int SampleGenoAncestry::SaveAncestryResults(string outFile, bool isAppend)
+-            sprintf(line, "%s\t%6.2f\t%6.2f\t%6.2f\t%6.2f\t%6.2f\t%6.2f\t%d",
+-                    line, smp.ePct, smp.fPct, smp.aPct, smp.rawPe, smp.rawPf, smp.rawPa, smp.ancGroupId);
+-
+-            fprintf(ifp, "%s\n", line);
++            fprintf(ifp, "\t%6.2f\t%6.2f\t%6.2f\t%6.2f\t%6.2f\t%6.2f\t%d\n",
++                    smp.ePct, smp.fPct, smp.aPct,
++                    smp.rawPe, smp.rawPf, smp.rawPa, smp.ancGroupId);

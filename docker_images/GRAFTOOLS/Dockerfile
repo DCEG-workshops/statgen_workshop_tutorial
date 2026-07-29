@@ -8,14 +8,22 @@
 # Both tools are by Yumi (Jimmy) Jin, share reference-panel data, and are often
 # used together, so this image ships both on the PATH.
 #
-# Two upstream issues were found and handled while building/testing this image:
+# Three upstream issues were found and handled while building/testing this image:
 #
 #   1. GrafAnc's Makefile lists libraries BEFORE the object files on the link
 #      line. Modern GNU ld (Ubuntu defaults to --as-needed) then drops libhts,
 #      so `make` fails with "undefined reference to hts_open/bcf_*". This file
 #      compiles GrafAnc explicitly with libraries AFTER the objects instead.
 #
-#   2. The prebuilt GRAF 2.3 binary (built for a ~2006 GNU/Linux 2.6.18 target)
+#   2. GrafAnc builds output rows by repeatedly using the same fixed buffer as
+#      both the source and destination of sprintf(). That overlap is undefined
+#      behavior and, in this optimized Ubuntu 24.04 build, drops Sample, SNPs,
+#      and all score columns before Pe. grafanc-output.patch writes fields
+#      directly, retains every valid sample, fixes two array deallocations, and
+#      returns a successful exit status. A real PLINK run below guards all 27
+#      output columns.
+#
+#   3. The prebuilt GRAF 2.3 binary (built for a ~2006 GNU/Linux 2.6.18 target)
 #      reproducibly stack-smashes inside SavePopulationResults() when run on a
 #      current glibc using the shipped `-pop` example, matching 0 SNPs. GRAF
 #      ships NO source, so it cannot be rebuilt here. GrafAnc is the actively
@@ -44,7 +52,7 @@
 #   # 2. Cross-build FOR amd64 and push in one step (buildx ships with Docker
 #   #    Desktop; on Apple Silicon this runs under QEMU emulation, so it's slow):
 #   docker buildx build --platform linux/amd64 \
-#       -t ghcr.io/dceg-workshops/graftools:1.0.0 \
+#       -t ghcr.io/dceg-workshops/graftools:1.0.1 \
 #       -t ghcr.io/dceg-workshops/graftools:latest \
 #       --push .
 #   # (swap --push for --load to keep the image locally instead of pushing)
@@ -61,12 +69,12 @@
 #   # if the package is still PRIVATE, authenticate the pull:
 #   #   export SINGULARITY_DOCKER_USERNAME=<your-github-username>
 #   #   export SINGULARITY_DOCKER_PASSWORD=<PAT with read:packages>
-#   singularity pull docker://ghcr.io/dceg-workshops/graftools:1.0.0
+#   singularity pull docker://ghcr.io/dceg-workshops/graftools:1.0.1
 #
 #   # 4. Run tools with `exec` (Biowulf auto-binds /data, /lscratch, etc.):
-#   singularity exec --cleanenv graftools_1.0.0.sif \
+#   singularity exec --cleanenv graftools_1.0.1.sif \
 #       grafanc /data/$USER/input.vcf.gz /data/$USER/out.txt
-#   singularity exec --cleanenv graftools_1.0.0.sif graf
+#   singularity exec --cleanenv graftools_1.0.1.sif graf
 #
 # Singularity notes: it runs as YOUR user (the image's non-root `graf` user and
 # /work are ignored), so read/write real Biowulf paths (/data, /lscratch), not
@@ -124,17 +132,29 @@ RUN wget -q "https://github.com/samtools/htslib/releases/download/${HTSLIB_VERSI
 RUN git clone https://github.com/jimmy-penn/grafanc.git /opt/grafanc \
     && git -C /opt/grafanc checkout "${GRAFANC_REF}"
 
+# Patch upstream output corruption and adjacent PLINK-path undefined behavior.
+COPY grafanc-output.patch /tmp/grafanc-output.patch
+RUN git -C /opt/grafanc apply --check --unidiff-zero /tmp/grafanc-output.patch \
+    && git -C /opt/grafanc apply --unidiff-zero /tmp/grafanc-output.patch
+
 WORKDIR /opt/grafanc/cpp
 # The allele-frequency panel must be decompressed before use (per README).
 RUN gunzip -f data/AncSnpPopAFs.txt.gz
 
 # Explicit compile: libraries AFTER objects (fixes the Makefile link-order bug),
 # and -O2 (upstream ships only -g / no optimization for this compute-heavy tool).
-RUN g++ -O2 -std=c++11 -pthread \
+RUN g++ -O2 -std=c++11 -pthread -Wall -Wextra -Werror=restrict \
         -I. -I"/opt/htslib/${HTSLIB_VERSION}/include" \
         -o grafanc *.cpp \
-        -L"/opt/htslib/${HTSLIB_VERSION}/lib" -lhts -lz -lm -lstdc++ \
-    && LD_LIBRARY_PATH="/opt/htslib/${HTSLIB_VERSION}/lib" ./grafanc 2>&1 | grep -q "GrafAnc"
+        -L"/opt/htslib/${HTSLIB_VERSION}/lib" -lhts -lz -lm -lstdc++
+
+# Compile-only smoke tests miss the writer bug. Exercise bundled PLINK data and
+# require the complete 27-column schema for the header and every sample row.
+RUN LD_LIBRARY_PATH="/opt/htslib/${HTSLIB_VERSION}/lib" \
+        ./grafanc ../medium_testing/input/TGP_40_50K_rs.bed \
+        /tmp/grafanc-plink.tsv --maxmem 100 \
+    && awk -F '\t' 'NR == 1 && (NF != 27 || $1 != "Sample" || $2 != "SNPs") { exit 1 } NR > 1 && (NF != 27 || $1 == "" || $2 !~ /^[0-9]+$/ || $2 < 100) { exit 1 } END { if (NR != 41) exit 1 }' /tmp/grafanc-plink.tsv \
+    && rm -f /tmp/grafanc-plink.tsv
 
 # Drop what the runtime image doesn't need (test data ~40 MB, git history, objects).
 RUN rm -rf /opt/grafanc/.git /opt/grafanc/medium_testing /opt/grafanc/cpp/*.o
