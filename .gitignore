@@ -6,6 +6,9 @@ containers/
 # no mac stuff
 .DS_Store
 
+# machine-local Claude Code settings
+.claude/settings.local.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
