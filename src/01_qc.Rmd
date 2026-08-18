@@ -1,0 +1,564 @@
+---
+title: "Session 1: Introduction to GWAS Quality Control"
+output: html_document
+---
+
+# Objectives
+
+- Introduce the RStudio Server / Biowulf HPC environment for genetic data analysis.
+- Introduce the importance of Quality Control (QC) in the GWAS analysis pipeline.
+- Provide hands-on practice performing standard QC steps on real GWAS data using PLINK.
+
+# Prerequisites
+
+- A basic understanding of genetics, genome-wide association studies (GWAS), and the role of QC in GWAS.
+- Familiarity with the command line, since we will use PLINK (a command-line tool) for QC.
+- A Biowulf HPC account with access to this shared workshop project.
+- RStudio launched from NIH OnDemand.
+- **PLINK 1.9 must be loaded before starting your OnDemand RStudio session.**
+
+# Workshop Overview
+
+We will use PLINK to carry out several essential QC procedures on real genotype data from the PennCATH study of coronary artery disease. This dataset includes 1,401 individuals genotyped at 861,473 markers.
+
+In this session we will:
+
+1. Check sample and SNP missingness
+2. Identify markers that deviate from Hardy-Weinberg Equilibrium
+3. Check heterozygosity across samples
+4. Check estimated relatedness (IBD) between samples
+5. Examine population structure using PCA, including a merge with 1000 Genomes reference data to identify ancestry
+6. Infer ancestry directly using GrafAnc, and compare it to the PCA-based approach
+
+---
+
+# Setup
+
+## Set path variables
+
+Paths are defined once in the R session below. `Sys.setenv()` makes the same values available to each subsequent `{bash}` shell.
+
+```{r setup-paths}
+username <- Sys.getenv("USER")
+
+if (!nzchar(username)) {
+  stop("USER is not set in this R session.")
+}
+
+input_dir <- "/data/DCEG_shared/statgen_workshop_2026/data/workshop1/inputs/penncath_withPheno"
+reference_dir <- "/data/DCEG_shared/statgen_workshop_2026/data/workshop1/inputs/ref"
+analysis_dir <- file.path(
+  "/data", username, "Stats_Gen", "workshop1", "01_analysis"
+)
+
+dir.create(analysis_dir, recursive = TRUE, showWarnings = FALSE)
+
+if (!dir.exists(analysis_dir)) {
+  stop("Could not create analysis directory: ", analysis_dir)
+}
+
+Sys.setenv(
+  input_dir = input_dir,
+  reference_dir = reference_dir,
+  analysis_dir = analysis_dir
+)
+```
+
+```{bash list-input-directory}
+ls ${input_dir}
+```
+
+## Confirm PLINK is available
+
+This workshop uses **PLINK 1.9**. Confirm your module loaded correctly:
+
+```{bash check-plink}
+which plink
+plink --version
+```
+
+## Load R libraries
+
+R chunks in this document share a single persistent R session, so libraries only need to be loaded once — but we'll reload them at the top of major sections as a safety net in case you run chunks out of order.
+
+```{r load-libraries}
+library(tidyverse)
+library(data.table)
+library(glue)
+```
+
+---
+
+# Data Overview
+
+The dataset is PLINK's standard binary format: `.bed` (genotypes), `.bim` (marker info), `.fam` (sample info and phenotype).
+
+```{bash view-fam}
+head ${input_dir}/penncath.fam
+```
+
+Column 6 of the `.fam` file is the phenotype: here, coronary artery disease (CAD) case/control status (`1` = control, `2` = case, `-9` = missing).
+
+---
+
+# QC Step 1: Missingness
+
+## Sample and variant missingness
+
+We start by calculating the proportion of missing genotype calls, per variant and per sample.
+
+```{bash run-missing}
+
+plink --bfile ${input_dir}/penncath --missing --out ${analysis_dir}/penncath
+```
+
+This writes `penncath.lmiss` (per-variant missingness) and `penncath.imiss` (per-sample missingness).
+
+## Variant missingness distribution
+
+```{r plot-variant-missing}
+
+variant_miss <- fread(file.path(analysis_dir, "penncath.lmiss"))
+
+variant_miss %>% ggplot(aes(x = F_MISS)) +
+  geom_histogram() +
+  labs(title = "Variant Missing Rate") +
+  theme_classic()
+```
+
+**Question:** If we filter variants with missingness > 1%, how many would be removed?
+
+```{r count-variant-missing}
+variant_miss %>%
+  mutate(missing_rate_gt0.01 = if_else(F_MISS > 0.01, "Yes", "No")) %>%
+  group_by(missing_rate_gt0.01) %>%
+  tally()
+```
+
+## Apply the variant missingness filter
+
+```{bash filter-geno}
+
+plink --bfile ${input_dir}/penncath --geno 0.01 --make-bed --out ${analysis_dir}/penncath.geno0.01
+```
+
+## Re-check sample missingness on the filtered data
+
+```{bash sample-missing}
+
+plink --bfile ${analysis_dir}/penncath.geno0.01 --missing --out ${analysis_dir}/penncath.geno0.01
+```
+
+```{r check-sample-missing}
+sample_miss <- fread(file.path(analysis_dir, "penncath.geno0.01.imiss"))
+
+sample_miss %>%
+  mutate(missing_rate_gt0.01 = if_else(F_MISS > 0.01, "Yes", "No")) %>%
+  group_by(missing_rate_gt0.01) %>%
+  tally()
+```
+
+## Apply the sample missingness filter
+
+```{bash filter-mind}
+
+plink --bfile ${analysis_dir}/penncath.geno0.01 --mind 0.01 --make-bed --out ${analysis_dir}/penncath.geno0.01.mind0.01
+```
+
+---
+
+# QC Step 2: Hardy-Weinberg Equilibrium (HWE)
+
+For each SNP, we test whether observed genotype frequencies deviate from what's expected under Hardy-Weinberg equilibrium. Large deviations can indicate genotyping error, though they may also reflect true population-genetic phenomena (e.g., selection) or population stratification.
+
+```{bash run-hwe}
+
+plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01 --hardy --out ${analysis_dir}/penncath.geno0.01.mind0.01
+```
+
+**Important:** PLINK's `--hardy` output reports up to three rows per SNP — `ALL` (combined sample), `AFF` (cases only), and `UNAFF` (controls only) — when a case/control phenotype is present. For QC in a case/control study, we use the controls (`UNAFF`) because a genuine disease association can cause HWE departures among cases.
+
+```{r hwe-check}
+hwe_stat <- fread(file.path(analysis_dir, "penncath.geno0.01.mind0.01.hwe"))
+hwe_stat <- hwe_stat %>% filter(TEST == "UNAFF")
+
+hwe_stat %>% ggplot(aes(x = P)) +
+  geom_histogram() +
+  labs(title = "Hardy-Weinberg equilibrium exact test p-values") +
+  theme_classic()
+```
+
+**Question:** How many markers have a HWE p-value below 1e-8?
+
+```{r hwe-count}
+hwe_stat %>%
+  mutate(hwe_stat_lessThan1e_8 = if_else(P < 1e-8, TRUE, FALSE)) %>%
+  group_by(hwe_stat_lessThan1e_8) %>%
+  tally()
+```
+
+**Question for discussion:** What HWE p-value threshold would you use to filter markers? PLINK removes markers with HWE p-values below the selected cutoff, so a higher cutoff (e.g., 1e-3) is more aggressive and removes more markers, while a lower cutoff (e.g., 1e-6) is more permissive and retains more. In datasets with multiple ancestries, apparent HWE violations can also reflect population stratification rather than genotyping error — how might you account for this?
+
+*(We will not apply an HWE filter within this notebook — see the exercise at the end, where you'll build your own HWE-filtered dataset.)*
+
+---
+
+# QC Step 3: LD Pruning
+
+Many downstream QC steps (relatedness, heterozygosity, PCA) assume approximately independent markers. We prune markers in high linkage disequilibrium (LD) with their neighbors before those steps.
+
+Here we use a 50-marker window, sliding 5 markers at a time, removing one marker from any pair with LD (r²) > 0.3.
+
+```{bash ld-pruning}
+
+plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01 --indep-pairwise 50 5 0.3 --out ${analysis_dir}/penncath.geno0.01.mind0.01
+```
+
+This produces `.prune.in` (markers to keep) and `.prune.out` (markers to remove) — we'll use `.prune.in` for the next several steps.
+
+---
+
+# QC Step 4: Relatedness (IBD)
+
+We estimate pairwise relatedness (identity by descent, IBD) between all samples, to check for unexpected duplicates or close relatives.
+
+```{bash ibd-check}
+
+plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01 \
+      --extract ${analysis_dir}/penncath.geno0.01.mind0.01.prune.in \
+      --genome --out ${analysis_dir}/penncath.geno0.01.mind0.01.LD0.3
+```
+
+`PI_HAT` estimates the proportion of the genome shared identical-by-descent between a pair of samples: ~1.0 for duplicates/monozygotic twins, ~0.5 for parent-child or full siblings, ~0.25 for half-siblings/grandparent-grandchild/avuncular, ~0.125 for first cousins, and near 0 for unrelated individuals.
+
+```{r ibd-summary}
+ibd <- fread(file.path(analysis_dir, "penncath.geno0.01.mind0.01.LD0.3.genome"))
+
+summary(ibd$PI_HAT)
+```
+
+We can also visualize `Z0` (probability of sharing 0 alleles IBD) vs. `Z1` (probability of sharing 1 allele IBD) for each pair. Unrelated pairs cluster near `Z0 = 1, Z1 = 0`.
+
+```{r ibd-plot}
+ibd %>% ggplot(aes(x = Z0, y = Z1)) +
+  geom_point() +
+  xlim(0, 1) + ylim(0, 1) +
+  labs(title = "Z0 vs. Z1") +
+  theme_classic()
+```
+
+**Question:** Based on the maximum PI_HAT observed, do we have any duplicate samples or close relatives that should be removed?
+
+---
+
+# QC Step 5: Heterozygosity
+
+Samples with unusually high or low heterozygosity can indicate sample contamination, poor DNA quality, or (for low heterozygosity) inbreeding.
+
+```{bash het-check}
+
+plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01 --het \
+      --extract ${analysis_dir}/penncath.geno0.01.mind0.01.prune.in \
+      --out ${analysis_dir}/penncath.geno0.01.mind0.01.LD0.3
+```
+
+```{r het-summary}
+heterozygocity <- fread(file.path(analysis_dir, "penncath.geno0.01.mind0.01.LD0.3.het"))
+heterozygocity <- heterozygocity %>% mutate(het_rate = (`N(NM)` - `O(HOM)`) / `N(NM)`)
+
+heterozygocity %>% ggplot(aes(x = het_rate)) +
+  geom_histogram() +
+  labs(title = "Heterozygosity") +
+  theme_classic()
+```
+
+**Question:** Which samples fall more than 3 standard deviations from the mean heterozygosity rate? Should we remove them?
+
+```{r het-outliers}
+heterozygocity %>%
+  filter(het_rate < mean(het_rate) - 3*sd(het_rate) |
+         het_rate > mean(het_rate) + 3*sd(het_rate))
+```
+
+**A note on choosing a metric:** the `.het` output also includes a column `F`, PLINK's inbreeding coefficient estimate — a *standardized* measure of homozygosity relative to what's expected given each sample's own allele frequencies (unlike `het_rate`, which is just a raw proportion). A common convention in published GWAS QC pipelines is to exclude samples with `F > 0.1` or `F < -0.1` (some pipelines use a more relaxed `0.2` instead).
+
+Try applying that threshold to this same data:
+
+```{r het-F-threshold}
+heterozygocity %>%
+  filter(F > 0.1 | F < -0.1)
+```
+
+**Question:** How does this compare to the ±3 SD result above? What does this tell you about the sensitivity of QC decisions to the choice of metric and threshold?
+
+---
+
+# QC Step 6: Population Structure (PCA)
+
+We use Principal Component Analysis (PCA) on our pruned, common markers to assess population structure. **Important:** always calculate PCs on LD-pruned data — using unpruned markers can produce misleading components driven by local LD structure rather than genome-wide ancestry signal.
+
+```{bash simple-pca}
+
+plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01 \
+      --extract ${analysis_dir}/penncath.geno0.01.mind0.01.prune.in \
+      --maf 0.05 --pca --out ${analysis_dir}/penncath.geno0.01.mind0.01.LD0.3
+```
+
+```{r plot-pca}
+pca <- fread(file.path(analysis_dir, "penncath.geno0.01.mind0.01.LD0.3.eigenvec"))
+
+pca %>% rename(PC1 = V3, PC2 = V4) %>%
+  ggplot(aes(x = PC1, y = PC2)) +
+  geom_point() +
+  labs(title = "PC1 vs. PC2") +
+  theme_classic()
+
+pca %>% rename(PC2 = V4, PC3 = V5) %>%
+  ggplot(aes(x = PC2, y = PC3)) +
+  geom_point() +
+  labs(title = "PC2 vs. PC3") +
+  theme_classic()
+```
+
+**Question:** Do you see distinct clusters in this plot? What might explain them? We'll investigate this further below by comparing to a reference panel with known ancestry labels.
+
+---
+
+# QC Step 7: Ancestry via 1000 Genomes Merge
+
+To interpret the clustering seen in our PCA, we merge our data with a reference panel of known-ancestry samples from the 1000 Genomes Project.
+
+## Attempt the merge
+
+`--bmerge` combines PennCATH (the base dataset) with the 1000 Genomes reference (the dataset being merged in). The result is the **union** of samples (all PennCATH + all 1000G individuals) and the **union** of variants (any marker present in either file) — not just the overlap. Genotypes are only present where the original source dataset actually had data for that marker/sample combination.
+
+```{bash merge-1kg}
+
+plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01 \
+      --bmerge ${reference_dir}/all_pops_1kgenomes_markersForPCA.bed \
+      ${reference_dir}/all_pops_1kgenomes_markersForPCA.bim \
+      ${reference_dir}/all_pops_1kgenomes_markersForPCA.fam \
+      --make-bed --out ${analysis_dir}/penncath.geno0.01.mind0.01.merge1kgenomes || true
+```
+
+This is expected to fail. Genotyping arrays and reference panels don't always report alleles relative to the same DNA strand, so PLINK sees an apparent conflict (more than 2 alleles) at overlapping markers. This is a **strand orientation mismatch**, not evidence of true multiallelic variation.
+
+## Flip mismatched markers
+
+`--flip` takes the complementary base (A↔T, C↔G) for the flagged markers, which corrects non-palindromic strand mismatches. (Note: A/T and C/G markers are ambiguous and cannot be resolved this way — a small residual risk we accept for this teaching exercise.)
+
+```{bash flip-snps}
+
+plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01 \
+      --flip ${analysis_dir}/penncath.geno0.01.mind0.01.merge1kgenomes-merge.missnp \
+      --make-bed \
+      --out ${analysis_dir}/penncath.geno0.01.mind0.01_flipSNPs
+```
+
+## Re-attempt the merge
+
+```{bash remerge-1kg}
+
+plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01_flipSNPs \
+      --bmerge ${reference_dir}/all_pops_1kgenomes_markersForPCA.bed \
+      ${reference_dir}/all_pops_1kgenomes_markersForPCA.bim \
+      ${reference_dir}/all_pops_1kgenomes_markersForPCA.fam \
+      --make-bed --out ${analysis_dir}/penncath.geno0.01.mind0.01.merge1kgenomes
+```
+
+## PCA on the merged dataset
+
+The merged dataset now contains the union of PennCATH's and 1000 Genomes' variants. Most markers are genotyped in only one of the two source datasets — a marker unique to PennCATH is missing in essentially all 2,504 1000 Genomes samples (missingness ≈ 2,504/3,884 ≈ 64.5%), and a marker unique to 1000 Genomes is missing in essentially all 1,380 PennCATH samples (missingness ≈ 1,380/3,884 ≈ 35.5%). Applying `--geno 0.1` (a 10% missingness filter) drops both categories of cohort-unique markers, leaving mostly the small set of markers both cohorts genotyped in common. We also apply `--maf 0.05` to exclude rare variants, which tend to add noise to PCA.
+
+(Note: the exact missingness percentage for a cohort-unique marker depends on the relative sizes of the two cohorts being merged — it isn't a fixed number in general, though in our case both categories comfortably exceed the 10% threshold.)
+
+**Note:** unlike the study-only PCA above, we do not apply an additional LD-pruning step (`--extract .prune.in`) here. The 1000 Genomes reference marker panel (`all_pops_1kgenomes_markersForPCA`) was already curated specifically for ancestry PCA, so re-pruning on top of it isn't necessary — and our own `.prune.in` file was built for PennCATH's full marker set, not this much smaller shared-marker set.
+
+```{bash merged-pca}
+
+plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01.merge1kgenomes \
+      --geno 0.1 --maf 0.05 --pca \
+      --out ${analysis_dir}/penncath.geno0.01.mind0.01.merge1kgenomes
+```
+
+## Get 1000 Genomes population labels
+
+```{bash clone-akt}
+cd ${analysis_dir}
+git clone https://github.com/Illumina/akt.git
+```
+
+## Plot ancestry-labeled PCA
+
+```{r plot-merged-pca}
+library(tidyverse)
+library(data.table)
+library(glue)
+
+
+pc_with1kgenomes <- fread(file.path(analysis_dir, "penncath.geno0.01.mind0.01.merge1kgenomes.eigenvec"))
+pop_info_1kgenomes <- fread(file.path(analysis_dir, "akt/data/integrated_call_samples_v3.20130502.ALL.panel"))
+
+pc_with1kgenomes <- pc_with1kgenomes %>%
+  rename(PC1 = V3, PC2 = V4, PC3 = V5) %>%
+  left_join(pop_info_1kgenomes, by = c("V1" = "sample"))
+
+ggplot(pc_with1kgenomes, aes(x = PC1, y = PC2, color = super_pop)) +
+  geom_point(data = subset(pc_with1kgenomes, is.na(super_pop)), color = "black", alpha = 1) +
+  geom_point(alpha = 0.5) +
+  labs(title = "PC1 vs. PC2") +
+  theme_classic()
+
+ggplot(pc_with1kgenomes, aes(x = PC2, y = PC3, color = super_pop)) +
+  geom_point(data = subset(pc_with1kgenomes, is.na(super_pop)), color = "black", alpha = 1) +
+  geom_point(alpha = 0.5) +
+  labs(title = "PC2 vs. PC3") +
+  theme_classic()
+```
+
+Our study samples (black/NA points, since they aren't in the 1000 Genomes panel) should cluster tightly with one of the labeled superpopulations: AFR (African), AMR (admixed American), EAS (East Asian), EUR (European), or SAS (South Asian). This tells us the predominant ancestry of our cohort, and helps explain any clustering we saw in the study-only PCA above — fine-scale structure *within* a single superpopulation can still produce visible clusters, even when everyone shares the same broad continental ancestry.
+
+---
+
+# QC Step 8: Fast Ancestry Inference with GrafAnc
+
+In QC Step 7, we inferred ancestry manually: merging with a 1000 Genomes reference panel, resolving strand mismatches, and running PCA on the combined dataset. This approach is transparent and pedagogically useful, but it's slow and involves several fragile steps (the merge conflict, the flip, re-running PCA).
+
+[GrafAnc](https://github.com/jimmy-penn/grafanc) is a purpose-built tool that infers genetic ancestry directly from your genotype data in seconds, without needing to merge with an external reference panel. It compares each sample's genotypes against a curated panel of 282,424 ancestry-informative SNPs and assigns both a continental-level and sub-continental-level ancestry group, along with continuous ancestry scores.
+
+We'll run GrafAnc on our QC'd PennCATH data and compare its calls to the PCA-based clustering from Step 7.
+
+**Note:** GrafAnc requires unique sample IDs. PennCATH's `.fam` file has identical within-family IDs (all `1`), which GrafAnc will otherwise flag. We first create a version of the dataset with unique IDs.
+
+## Set up unique sample IDs
+
+```{bash grafanc-uniqueids}
+
+awk '{
+    gsub("\"", "", $1);
+    print "\"" $1 "\"", $2, "\"" $1 "\"", "\"" $1 "_" $2 "\""
+}' ${analysis_dir}/penncath.geno0.01.mind0.01.fam > ${analysis_dir}/penncath.updateIDs.txt
+
+plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01 --update-ids \
+     ${analysis_dir}/penncath.updateIDs.txt --make-bed \
+     --out ${analysis_dir}/penncath.geno0.01.mind0.01.uniqueIDs
+```
+
+## Install GrafAnc
+
+GrafAnc isn't available as a Biowulf module, so we install it directly from GitHub into your own analysis directory. This only needs to be done once per session.
+
+```{bash grafanc-install}
+
+# Clone GrafAnc (skip if already present)
+if [ ! -d "${analysis_dir}/grafanc" ]; then
+    cd ${analysis_dir}
+    git clone https://github.com/jimmy-penn/grafanc.git
+fi
+
+# GrafAnc's reference SNP panel ships gzipped and must be decompressed once
+if [ -f "${analysis_dir}/grafanc/cpp/data/AncSnpPopAFs.txt.gz" ]; then
+    gunzip ${analysis_dir}/grafanc/cpp/data/AncSnpPopAFs.txt.gz
+fi
+
+ls ${analysis_dir}/grafanc/bin/
+```
+
+## Run GrafAnc
+
+GrafAnc needs two things that aren't there by default on Biowulf: the `htslib` shared library (we get this by loading the `bcftools` module) and its own reference data directory (we point it there with `GRAFPATH`). Both are handled in the chunk below — you shouldn't need to think about them further.
+
+```{bash run-grafanc}
+module load bcftools/1.23
+export GRAFPATH=${analysis_dir}/grafanc/cpp
+
+${analysis_dir}/grafanc/bin/grafanc \
+    ${analysis_dir}/penncath.geno0.01.mind0.01.uniqueIDs \
+    ${analysis_dir}/penncath_grafanc_out.txt
+
+head ${analysis_dir}/penncath_grafanc_out.txt
+```
+
+This produces one row per sample, including continuous ancestry-component scores (`GD1-3`, `EA1-4`, `AF1-3`, `EU1-3`, `SA1-2`, `IC1-3`), estimated continental ancestry proportions (`Pe`, `Pf`, `Pa`: percent European, African, East Asian), and an assigned `AncGroupID` — a 3-digit code where the first digit indicates continental ancestry (e.g., `3xx` = European, `1xx` = African, `5xx` = East Asian) and the full code indicates a finer sub-continental group (e.g., `303` = Western Europe).
+
+## Visualize GrafAnc ancestry scores
+
+```{r plot-grafanc}
+library(tidyverse)
+library(data.table)
+library(glue)
+
+
+grafanc_out <- fread(file.path(analysis_dir, "penncath_grafanc_out.txt"))
+
+# GrafAnc's continental-level ancestry group is encoded in the first digit of AncGroupID
+grafanc_out <- grafanc_out %>%
+  mutate(ContinentalGroup = case_when(
+    AncGroupID >= 100 & AncGroupID < 200 ~ "AFR",
+    AncGroupID >= 200 & AncGroupID < 300 ~ "MENA",
+    AncGroupID >= 300 & AncGroupID < 400 ~ "EUR",
+    AncGroupID >= 400 & AncGroupID < 500 ~ "SAS",
+    AncGroupID >= 500 & AncGroupID < 600 ~ "EAS",
+    AncGroupID >= 600 & AncGroupID < 700 ~ "AMR",
+    AncGroupID >= 700 & AncGroupID < 800 ~ "OCN",
+    AncGroupID >= 800 ~ "MIX",
+    TRUE ~ NA_character_
+  ))
+
+grafanc_out %>% ggplot(aes(x = GD1, y = GD2, color = ContinentalGroup)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "GrafAnc Continental Ancestry (GD1 vs. GD2)") +
+  theme_classic()
+
+grafanc_out %>% count(ContinentalGroup, sort = TRUE)
+```
+
+**Question:** How does the shape and clustering of this GD1 vs. GD2 plot compare to the PC1 vs. PC2 plot from Step 6? Do you see a similar number of clusters?
+
+## Summarize GrafAnc ancestry calls for the cohort
+
+```{r summarize-grafanc}
+grafanc_out %>%
+  count(AncGroupID, ContinentalGroup, sort = TRUE) %>%
+  mutate(percent = round(100 * n / sum(n), 1))
+```
+
+**Question:** Consistent with the manual PCA clustering from Steps 6–7, this cohort is overwhelmingly one continental ancestry group. Which sub-continental `AncGroupID` groups make up the bulk of samples, and does that match what you'd expect for a Philadelphia-based coronary artery disease study (PennCATH)? (You should find the cohort is >99% European, split across several European sub-groups, plus a handful of Middle East/North Africa samples — a finer breakdown than a simple "European vs. non-European" split.)
+
+**Question:** Are there any samples assigned to a different continental or sub-continental group than the majority? These are good candidates to cross-check against the PCA plot from Step 6 — do they also appear as outliers there?
+
+---
+
+# Exercise
+
+We now have HWE statistics for each marker, heterozygosity estimates per sample, pairwise relatedness (IBD) estimates, and GrafAnc ancestry calls for each sample. Using these:
+
+1. Choose a HWE p-value threshold and justify your choice.
+2. Choose and apply a threshold for excluding samples based on heterozygosity, and separately for relatedness. **Note:** a correct, well-justified analysis may conclude that no samples need to be excluded on one or both of these criteria — that is a legitimate outcome, not a sign you did something wrong. The goal is to apply and justify a defensible method, not to guarantee you find something to remove.
+3. **Optional:** Consider whether GrafAnc's ancestry calls suggest any samples should be excluded or flagged before downstream GWAS analysis (e.g., ancestry outliers relative to the bulk of the cohort). This is a judgment call — there is no single correct answer, and a well-reasoned decision to retain all samples is as valid as a decision to exclude some, depending on your study's goals.
+4. Use PLINK to produce a final, fully-filtered dataset (`--hwe`, `--remove`, etc. as appropriate) ready for downstream GWAS analysis.
+
+📓 **Hint:** The [PLINK 1.9 Input Filtering documentation](https://www.cog-genomics.org/plink/1.9/filter) covers the relevant flags.
+
+```{bash exercise-code}
+# Your code here
+```
+
+---
+
+# Wrap-up
+
+Your analysis directory is on persistent Biowulf storage under your `/data/$USER` allocation, so no additional saving step is needed. Note that this now includes your `grafanc/` clone (roughly 30 MB, mostly the ancestry SNP reference panel) — this persists too, so you won't need to re-clone it in a future session; the setup chunk in QC Step 8 checks for it and skips the clone if it already exists.
+
+To check your total disk usage for this session:
+
+```{bash check-usage}
+du -sh ${analysis_dir}
+```
+
+If you'd like to clean up any files or directories from your analysis directory to save space, you can use `rm` (for individual files) or `rm -r` (for directories) directly in a bash chunk or terminal, e.g.:
+
+```{bash cleanup-example}
+# rm ${analysis_dir}/some_file_to_delete
+# rm -r ${analysis_dir}/some_directory_to_delete
+```

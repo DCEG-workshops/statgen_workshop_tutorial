@@ -1,0 +1,511 @@
+---
+title: "Session 2: GWAS with Regenie"
+output: html_document
+---
+
+# Objectives
+
+- Introduce Regenie's two-step whole-genome regression approach to GWAS.
+- Run both quantitative-trait (linear) and binary-trait (logistic/Firth) GWAS on the PennCATH dataset using Regenie.
+- Compare Regenie's results and behavior to PLINK's, and understand why the two tools can disagree even on the same data.
+
+# Prerequisites
+
+- Completion of Session 1 (GWAS Quality Control), or equivalent familiarity with PLINK, missingness/HWE/heterozygosity QC concepts, and PCA-based ancestry adjustment.
+- A Biowulf HPC account with access to this shared workshop project.
+- RStudio launched from NIH OnDemand.
+- **Regenie 4.0 and PLINK 1.9 must be loaded before starting your OnDemand RStudio session.**
+
+# Workshop Overview
+
+We'll use the same PennCATH coronary artery disease dataset lineage as Session 1 (a different, colleague-provided teaching copy — not the output of your own Session 1 QC exercise), to run a full Regenie two-step GWAS:
+
+1. Review the pre-cleaned phenotype, covariate, and genotype inputs
+2. Prune genotypes for Regenie's Step 1 whole-genome ridge regression
+3. Diagnose and resolve a genotyping-artifact error encountered during Step 1
+4. Run Step 1 (LOCO prediction) for both a quantitative trait and a binary trait (CAD status)
+5. Run Step 2 (per-variant association testing) for both traits
+6. Visualize and summarize results
+7. Compare Regenie's results to PLINK's (take-home exercise)
+
+---
+
+# Setup
+
+## Set path variables
+
+```{r setup-paths}
+username <- Sys.getenv("USER")
+
+if (!nzchar(username)) {
+  stop("USER is not set in this R session.")
+}
+
+input_dir <- "/data/DCEG_shared/statgen_workshop_2026/data/workshop2/gwas"
+analysis_dir <- file.path(
+  "/data", username, "Stats_Gen", "workshop2", "02a_analysis"
+)
+step1_source <- file.path(input_dir, "step1_source")
+
+dir.create(analysis_dir, recursive = TRUE, showWarnings = FALSE)
+
+if (!dir.exists(analysis_dir)) {
+  stop("Could not create analysis directory: ", analysis_dir)
+}
+
+Sys.setenv(
+  input_dir = input_dir,
+  analysis_dir = analysis_dir,
+  step1_source = step1_source
+)
+```
+
+```{bash list-input-directory}
+ls ${input_dir}
+```
+
+## Confirm Regenie and PLINK are available
+
+This workshop uses **Regenie 4.0**. Since Regenie must be loaded from the OnDemand session request page (see Prerequisites above), we're only confirming it's visible here, not loading it ourselves.
+
+```{bash check-regenie}
+which regenie
+regenie --version
+which plink
+plink --version
+```
+
+## Load R libraries
+
+```{r load-libraries}
+library(tidyverse)
+library(data.table)
+library(glue)
+library(qqman)
+```
+
+---
+
+# Data Overview
+
+We're using PLINK's standard binary format (`penncath_clean_maf0.05.bed/.bim/.fam`), plus:
+
+- `sim_pheno.pheno` — a simulated quantitative trait (no header; columns are FID, IID, phenotype)
+- `covar.txt` — 10 ancestry principal components as covariates (with header; same style of PCA adjustment introduced in Session 1)
+- Coronary artery disease (CAD) case/control status, embedded in column 6 of the `.fam` file (PLINK convention: `1`=control, `2`=case, `-9`=missing)
+
+```{bash view-inputs}
+echo "=== sim_pheno.pheno ==="
+head ${input_dir}/sim_pheno.pheno
+echo ""
+echo "=== penncath_clean_maf0.05.fam (CAD status = column 6) ==="
+head ${input_dir}/penncath_clean_maf0.05.fam
+echo ""
+echo "=== covar.txt ==="
+head ${input_dir}/covar.txt
+```
+
+**Note on ID formatting:** FIDs are quoted (`"10002"`). PLINK treats these literal quote characters as part of the ID token itself — `"10002"` and `10002` are different IDs as far as PLINK (and Regenie) are concerned. This formatting must be preserved exactly wherever new phenotype files are generated, or sample-matching between files will silently fail.
+
+---
+
+# Step 1 Prep: Phenotype, Covariate, and Genotype Files
+
+Regenie has stricter file format requirements than PLINK: files need `FID IID` as the first two columns with a header row, missing values coded as `NA`, and binary traits coded `0`/`1`/`NA` (not PLINK's `1`/`2`/`-9` convention). `covar.txt` already satisfies this; the CAD status embedded in the `.fam` file and `sim_pheno.pheno` did not, so both were reformatted in advance.
+
+**Pre-cleaned files provided in `input_dir`:**
+
+- `qt_pheno.regenie.txt`, `cad_pheno.regenie.txt` — reformatted phenotype files (`FID IID QT_PHENO`, `FID IID CAD`)
+- `qt_keep.txt`, `bt_keep.txt` — per-trait sample keep-lists
+
+The keep-lists matter because two things restrict the usable sample set beyond simple phenotype missingness:
+
+- About a third of samples (468 of 1,401) have missing CAD status. The QT phenotype has no missing values.
+- `covar.txt` covers only 1,380 of the 1,401 genotyped samples — 21 samples are absent from it entirely.
+
+Since Step 1 and Step 2 both need phenotype, genotype, and covariate data for the same sample, each trait's final analysis set is the intersection of: non-missing phenotype, AND present in `covar.txt`. This gives **QT N = 1,380** and **BT N = 918**. Each trait's entire pipeline — pruned file, phenotype file, full genotype file — is restricted to that trait's own keep-list throughout, so nothing downstream silently drifts onto a different sample set partway through.
+
+```{bash confirm-keep-lists}
+wc -l ${input_dir}/qt_keep.txt ${input_dir}/bt_keep.txt
+```
+
+---
+
+# Step 2: LD-Pruning for Regenie Step 1
+
+Regenie's Step 1 fits a whole-genome ridge regression to build a leave-one-chromosome-out prediction, and this should be done on an LD-pruned, common-variant marker set rather than the full dense panel.
+
+**Why Step 1 needs a pruned marker set:** ridge regression handles correlated (LD-linked) predictors reasonably well, but including the full dense variant panel would be computationally expensive and add little information, since adjacent variants in strong LD are largely redundant for building the background prediction. Pruning to a less redundant set keeps Step 1 tractable without sacrificing predictive power. Regenie's documentation recommends a denser marker set for this step than is typical for PCA, which is why we prune more lightly here — r²=0.9 in 1,000-variant windows — than Session 1's PCA pruning (r²=0.3).
+
+```{bash regenie-pruning}
+
+plink --bfile ${input_dir}/penncath_clean_maf0.05 \
+      --maf 0.01 \
+      --indep-pairwise 1000 100 0.9 \
+      --out ${analysis_dir}/step1_pruning
+
+wc -l ${analysis_dir}/step1_pruning.prune.in
+wc -l ${analysis_dir}/step1_pruning.prune.out
+```
+
+Expect roughly 383,000 of the original 626,430 variants retained (about 61%).
+
+```{bash regenie-extract-pruned}
+
+plink --bfile ${input_dir}/penncath_clean_maf0.05 \
+      --extract ${analysis_dir}/step1_pruning.prune.in \
+      --make-bed \
+      --out ${analysis_dir}/step1_input_pruned
+```
+
+## Subset genotypes per trait
+
+For each trait, we subset both the pruned file (for Step 1) and the full file (for Step 2) down to that trait's own keep-list — and **re-apply the MAF filter after subsetting**. This matters: a variant can be common in the full 1,401-sample cohort but become much rarer, or even monomorphic, in a smaller sub-sample. Re-filtering within each subset, rather than trusting a filter computed on a different, larger sample, avoids that trap.
+
+```{bash subset-genotypes-per-trait}
+
+# --- QT ---
+plink --bfile ${analysis_dir}/step1_input_pruned \
+      --keep ${input_dir}/qt_keep.txt \
+      --maf 0.01 \
+      --make-bed --out ${analysis_dir}/step1_input_pruned.qt
+
+plink --bfile ${input_dir}/penncath_clean_maf0.05 \
+      --keep ${input_dir}/qt_keep.txt \
+      --maf 0.01 \
+      --make-bed --out ${analysis_dir}/step2_input_full.qt
+
+# --- BT ---
+plink --bfile ${analysis_dir}/step1_input_pruned \
+      --keep ${input_dir}/bt_keep.txt \
+      --maf 0.01 \
+      --make-bed --out ${analysis_dir}/step1_input_pruned.bt
+
+plink --bfile ${input_dir}/penncath_clean_maf0.05 \
+      --keep ${input_dir}/bt_keep.txt \
+      --maf 0.01 \
+      --make-bed --out ${analysis_dir}/step2_input_full.bt
+```
+
+---
+
+# Step 3: Regenie Step 1
+
+Regenie splits GWAS into two stages to control for polygenic background while still testing one variant at a time:
+
+- **Step 1** fits a whole-genome ridge regression across the pruned, common-variant marker set, producing a **leave-one-chromosome-out (LOCO) prediction**: for each chromosome, a prediction of each sample's phenotype built from *every other* chromosome's variants. Output: a small `_pred.list` file pointing to per-chromosome `.loco` prediction files. No association statistics come out of Step 1 — it only builds this background prediction.
+- **Step 2** tests each variant individually for association, using the matching chromosome's LOCO prediction as an offset. This means each variant is tested after accounting for polygenic effects from all other chromosomes, while deliberately excluding its own chromosome to avoid proximal contamination. Output: per-variant summary statistics (effect size, standard error, p-value).
+
+This LOCO adjustment is the key structural difference from PLINK's single-marker regression, and the main reason Regenie's and PLINK's results can differ on identical data — a point you'll investigate directly in this session's homework.
+
+Let's try running Step 1 for the quantitative trait.
+
+```{bash regenie-step1-qt-first-attempt, eval=FALSE}
+
+regenie \
+  --step 1 \
+  --bed ${analysis_dir}/step1_input_pruned.qt \
+  --phenoFile ${input_dir}/qt_pheno.regenie.txt \
+  --phenoCol QT_PHENO \
+  --covarFile ${input_dir}/covar.txt \
+  --covarColList PC1,PC2,PC3,PC4,PC5,PC6,PC7,PC8,PC9,PC10 \
+  --bsize 1000 \
+  --strict \
+  --out ${analysis_dir}/step1_qt \
+  --threads 2
+```
+
+Regenie is refusing to proceed because this variant has essentially no variance (=0.000000) in our sample — meaning almost every sample has the same genotype at this position. Let's find out why.
+
+## Diagnosis
+
+**Check the raw genotype counts for the flagged variant.** PLINK's `--freqx` reports raw genotype counts (homozygous-A1 / heterozygous / homozygous-A2 / missing) for a variant:
+
+```{bash check-suspect-snp}
+
+plink --bfile ${analysis_dir}/step1_input_pruned.qt \
+      --snp rs2043416 --freqx \
+      --out ${analysis_dir}/check_rs2043416
+
+cat ${analysis_dir}/check_rs2043416.frqx
+```
+
+Nearly every genotyped sample is heterozygous at this SNP, with close to zero homozygotes of either allele. This is not simply low minor allele frequency — under Hardy-Weinberg equilibrium, even at 50% allele frequency roughly half of samples should be homozygous. Near-total heterozygosity across an entire cohort is a classic signature of a genotyping **artifact** (often a probe that cannot cleanly distinguish two similar genomic locations), not a real polymorphism.
+
+**Check whether an HWE test flags it, and scan for others like it.** Session 1 introduced the exact Hardy-Weinberg equilibrium test, which is highly sensitive to heterozygote excess. A single bad probe is rarely the only one on a genotyping array, so we scan the full cohort:
+
+```{bash check-hwe-of-suspects}
+
+# Scan the full (unfiltered) cohort for other variants with similarly extreme
+# heterozygote excess -- rs2043416 is unlikely to be the only one.
+plink --bfile ${input_dir}/penncath_clean_maf0.05 \
+      --freqx \
+      --out ${analysis_dir}/full_freqx_original
+
+awk 'NR>1 {
+    hom_a1=$5; het=$6; hom_a2=$7;
+    total_called = hom_a1 + het + hom_a2;
+    if (total_called > 0) {
+        het_frac = het / total_called;
+        if (het_frac > 0.95) print $2, hom_a1, het, hom_a2, het_frac;
+    }
+}' ${analysis_dir}/full_freqx_original.frqx | sort -k5 -rn > ${analysis_dir}/suspect_het_excess_original.txt
+
+wc -l ${analysis_dir}/suspect_het_excess_original.txt
+
+# Now check their HWE p-values
+awk '{print $1}' ${analysis_dir}/suspect_het_excess_original.txt | sort -u > ${analysis_dir}/step_excess_het.exclude
+
+plink --bfile ${input_dir}/penncath_clean_maf0.05 \
+      --extract ${analysis_dir}/step_excess_het.exclude \
+      --hardy \
+      --out ${analysis_dir}/suspect_hwe_check
+
+awk '$3=="ALL"' ${analysis_dir}/suspect_hwe_check.hwe | sort -k9 -g | head -20
+```
+
+Expect **~60 variants** across the genome with this same extreme heterozygosity signature, each with an HWE p-value that rounds to `0` at PLINK's display precision — comfortably clearing any reasonable HWE filtering threshold (e.g., `1e-6`).
+
+**The lesson:** HWE testing is specifically designed to catch this kind of artifact. This teaching dataset was evidently never run through an HWE filter before distribution. Session 1 introduced HWE testing conceptually but left applying an actual filter as an open exercise; this is a concrete case where skipping that step stops Regenie's ridge regression outright.
+
+## Applying an HWE filter
+
+We apply a standard `1e-6` threshold (per common convention, as discussed in Session 1) to both the pruned and full genotype files, for both traits.
+
+```{bash hwe-filter-both-traits}
+
+plink --bfile ${analysis_dir}/step1_input_pruned.qt \
+      --hwe 1e-6 \
+      --make-bed --out ${analysis_dir}/step1_input_pruned.qt.hwe
+
+plink --bfile ${analysis_dir}/step2_input_full.qt \
+      --hwe 1e-6 \
+      --make-bed --out ${analysis_dir}/step2_input_full.qt.hwe
+
+plink --bfile ${analysis_dir}/step1_input_pruned.bt \
+      --hwe 1e-6 \
+      --make-bed --out ${analysis_dir}/step1_input_pruned.bt.hwe
+
+plink --bfile ${analysis_dir}/step2_input_full.bt \
+      --hwe 1e-6 \
+      --make-bed --out ${analysis_dir}/step2_input_full.bt.hwe
+
+echo "=== Variant counts before/after HWE filter ==="
+echo "QT step1 pruned: $(wc -l < ${analysis_dir}/step1_input_pruned.qt.bim) -> $(wc -l < ${analysis_dir}/step1_input_pruned.qt.hwe.bim)"
+echo "QT step2 full:   $(wc -l < ${analysis_dir}/step2_input_full.qt.bim) -> $(wc -l < ${analysis_dir}/step2_input_full.qt.hwe.bim)"
+echo "BT step1 pruned: $(wc -l < ${analysis_dir}/step1_input_pruned.bt.bim) -> $(wc -l < ${analysis_dir}/step1_input_pruned.bt.hwe.bim)"
+echo "BT step2 full:   $(wc -l < ${analysis_dir}/step2_input_full.bt.bim) -> $(wc -l < ${analysis_dir}/step2_input_full.bt.hwe.bim)"
+```
+
+---
+
+# Step 4: Regenie Step 1 — for Real This Time
+
+We now run Step 1 for both traits against the HWE-filtered pruned files, building the LOCO prediction described above: a whole-genome-based prediction of each sample's phenotype, computed separately per chromosome by excluding that chromosome's own variants from the model used to predict it.
+
+⚠️ **This step is slow — expect roughly 8–22 minutes per trait** (BT tends to run faster than QT, since it has a smaller sample size). Given a 2-core allocation, we run both sequentially rather than backgrounding them in parallel, since parallel execution on only 2 cores mostly makes both jobs individually slower rather than saving wall-clock time.
+
+```{bash regenie-step1-qt, eval=FALSE}
+
+regenie \
+  --step 1 \
+  --bed ${analysis_dir}/step1_input_pruned.qt.hwe \
+  --phenoFile ${input_dir}/qt_pheno.regenie.txt \
+  --phenoCol QT_PHENO \
+  --covarFile ${input_dir}/covar.txt \
+  --covarColList PC1,PC2,PC3,PC4,PC5,PC6,PC7,PC8,PC9,PC10 \
+  --bsize 1000 \
+  --strict \
+  --out ${analysis_dir}/step1_qt \
+  --threads 2
+```
+
+```{bash regenie-step1-bt, eval=FALSE}
+
+regenie \
+  --step 1 \
+  --bed ${analysis_dir}/step1_input_pruned.bt.hwe \
+  --phenoFile ${input_dir}/cad_pheno.regenie.txt \
+  --phenoCol CAD \
+  --covarFile ${input_dir}/covar.txt \
+  --covarColList PC1,PC2,PC3,PC4,PC5,PC6,PC7,PC8,PC9,PC10 \
+  --bt \
+  --bsize 1000 \
+  --strict \
+  --out ${analysis_dir}/step1_bt \
+  --threads 2
+```
+
+Both should complete cleanly, each writing a `_pred.list` file — Step 1's actual output, a small text file pointing to the LOCO prediction file that Step 2 will use.
+
+**⏱️ To save class time**, pre-computed Step 1 outputs are provided under `input_dir/step1_source`. Copy them into your analysis directory and skip straight to Step 2:
+
+```{bash copy-precomputed-step1}
+
+cp ${step1_source}/step1_qt_pred.list ${analysis_dir}/
+cp ${step1_source}/step1_qt_1.loco ${analysis_dir}/
+cp ${step1_source}/step1_bt_pred.list ${analysis_dir}/
+cp ${step1_source}/step1_bt_1.loco ${analysis_dir}/
+
+cat ${analysis_dir}/step1_qt_pred.list
+cat ${analysis_dir}/step1_bt_pred.list
+tail -n18 ${step1_source}/step1_qt.log
+tail -n18 ${step1_source}/step1_bt.log
+```
+
+Regenie doesn't fit a single ridge regression — it fits several, one per candidate shrinkage parameter (the values 0.01, 0.25, 0.5, 0.75, 0.99 in the left column), then picks the one that generalizes best via cross-validation. Rsq and MSE are each candidate's out-of-sample fit; the <- min value marker flags the shrinkage value with the lowest MSE, which Regenie selects as the one used to build the final LOCO predictions written to the .loco file. This is standard practice for ridge regression generally: the shrinkage parameter itself is a tuning choice, not something fit directly from the data, so cross-validation across a grid of candidates is how the "right" amount of shrinkage gets chosen.
+
+
+---
+
+# Step 5: Regenie Step 2 — Association Testing
+
+Step 2 tests each variant for association, using the Step 1 LOCO prediction as an offset — this is what lets each variant's test already account for the polygenic background contributed by the rest of the genome, the fundamental difference from PLINK's single-marker regression. For the binary trait, we add `--firth --approx`, which reruns any variant crossing an initial p-value threshold (`--pThresh 0.05`) through Firth's penalized-likelihood correction — more numerically stable than standard logistic regression when case counts or minor allele counts are small, at added computational cost (hence applying it selectively rather than to every variant).
+
+```{bash regenie-step2-qt}
+
+regenie \
+  --step 2 \
+  --bed ${analysis_dir}/step2_input_full.qt.hwe \
+  --phenoFile ${input_dir}/qt_pheno.regenie.txt \
+  --phenoCol QT_PHENO \
+  --covarFile ${input_dir}/covar.txt \
+  --covarColList PC1,PC2,PC3,PC4,PC5,PC6,PC7,PC8,PC9,PC10 \
+  --pred ${step1_source}/step1_qt_pred.list \
+  --bsize 50000 \
+  --strict \
+  --out ${analysis_dir}/step2_qt \
+  --threads 2
+```
+
+```{bash regenie-step2-bt}
+
+regenie \
+  --step 2 \
+  --bed ${analysis_dir}/step2_input_full.bt.hwe \
+  --phenoFile ${input_dir}/cad_pheno.regenie.txt \
+  --phenoCol CAD \
+  --covarFile ${input_dir}/covar.txt \
+  --covarColList PC1,PC2,PC3,PC4,PC5,PC6,PC7,PC8,PC9,PC10 \
+  --pred ${step1_source}/step1_bt_pred.list \
+  --bt \
+  --firth --approx \
+  --pThresh 0.05 \
+  --bsize 50000 \
+  --strict \
+  --out ${analysis_dir}/step2_bt \
+  --threads 2
+```
+
+---
+
+# Step 6: Visualizing Results
+
+Regenie's `LOG10P` column is `-log10(p)`, not the raw p-value — we back-transform before feeding results into `qqman`.
+
+```{r load-regenie-results}
+
+qt_regenie <- fread(file.path(analysis_dir, "step2_qt_QT_PHENO.regenie"))
+bt_regenie <- fread(file.path(analysis_dir, "step2_bt_CAD.regenie"))
+
+qt_regenie <- qt_regenie %>% mutate(P = 10^(-LOG10P))
+bt_regenie <- bt_regenie %>% mutate(P = 10^(-LOG10P))
+
+cat("QT: N variants =", nrow(qt_regenie), "\n")
+cat("BT: N variants =", nrow(bt_regenie), "\n")
+```
+
+## Genomic inflation factor (lambda)
+
+```{r compute-lambda}
+compute_lambda <- function(pvals) {
+  chisq <- qchisq(pvals, 1, lower.tail = FALSE)
+  median(chisq, na.rm = TRUE) / qchisq(0.5, 1)
+}
+
+cat("QT lambda:", compute_lambda(qt_regenie$P), "\n")
+cat("BT lambda:", compute_lambda(bt_regenie$P), "\n")
+```
+
+## QQ plots
+
+```{r qq-plots}
+qq(qt_regenie$P, main = "QQ Plot: Quantitative Trait (Regenie)",
+   xlim = c(0, 7), ylim = c(0, 12), pch = 18, col = "blue4", cex = 1.2, las = 1)
+
+qq(bt_regenie$P, main = "QQ Plot: CAD (Regenie, Firth-corrected)",
+   xlim = c(0, 7), ylim = c(0, 12), pch = 18, col = "firebrick", cex = 1.2, las = 1)
+```
+**Interpreting lambda alongside the QQ plot's shape:** lambda is computed from the median of the test statistics, making it a measure of genome-wide background calibration, robust to a small number of true, strong associations in the tail. The QQ plot's tail, by contrast, is exactly where true hits show up. QT shows lambda just under 1 (well-calibrated background) combined with a sharp late tail-lift (a strong, localized true signal) — the classic signature of a clean background plus a small number of real hits. BT shows lambda modestly above 1 (mild background inflation) alongside a more modest tail departure (a weaker, sub-genome-wide-significant signal only).
+
+## Manhattan plots
+
+`qqman::manhattan()` expects columns named `CHR`, `BP`, `SNP`, `P` — different from Regenie's native `CHROM`, `GENPOS`, `ID`.
+
+```{r manhattan-plots}
+qt_manhattan_df <- qt_regenie %>% rename(CHR = CHROM, BP = GENPOS, SNP = ID)
+bt_manhattan_df <- bt_regenie %>% rename(CHR = CHROM, BP = GENPOS, SNP = ID)
+
+manhattan(qt_manhattan_df, main = "Manhattan Plot: Quantitative Trait (Regenie)",
+          col = c("#311B92", "#4A148C", "#1565C0", "#008080", "#08963E", "#FFE838"))
+
+manhattan(bt_manhattan_df, main = "Manhattan Plot: CAD (Regenie, Firth-corrected)",
+          col = c("pink", "blue", "red", "orange"))
+```
+
+**Note on the default threshold lines:** `qqman::manhattan()` draws a red line at genome-wide significance (`5e-8`, i.e. `-log10(p) ≈ 7.3`) and a blue line at the "suggestive significance" convention of `1e-5` (`-log10(p) = 5`) by default.
+
+---
+
+# Step 7: Genome-Wide Significant Hits
+
+Using the standard genome-wide significance threshold of `5×10⁻⁸`:
+
+```{r gws-hits-summary}
+gws_threshold <- 5e-8
+
+qt_gws <- qt_regenie %>%
+  filter(P < gws_threshold) %>%
+  arrange(P) %>%
+  select(CHROM, GENPOS, ID, ALLELE0, ALLELE1, A1FREQ, N, BETA, SE, P)
+
+bt_gws <- bt_regenie %>%
+  filter(P < gws_threshold) %>%
+  arrange(P) %>%
+  select(CHROM, GENPOS, ID, ALLELE0, ALLELE1, A1FREQ, N, BETA, SE, P)
+
+cat("=== Quantitative trait: genome-wide significant hits ===\n")
+cat("Number of hits:", nrow(qt_gws), "\n\n")
+print(qt_gws)
+
+cat("\n=== CAD: genome-wide significant hits ===\n")
+cat("Number of hits:", nrow(bt_gws), "\n\n")
+print(bt_gws)
+```
+
+Expect **23 genome-wide significant hits for the quantitative trait**, clustered into two distinct loci (chromosome 10, around 123.3 Mb; chromosome 11, around 61.5–61.6 Mb), and **zero hits for CAD** — consistent with CAD's strongest signal falling in the "suggestive" but not genome-wide-significant range, on a smaller (918-sample) and less well-powered cohort.
+
+**Discussion:** within each locus, SNPs share similar allele frequencies and effect sizes, with p-values decaying smoothly moving away from the lead SNP. Consider what this pattern indicates about linkage disequilibrium, and about whether a GWAS hit identifies a single causal variant or a genomic region.
+
+---
+
+# Homework: Comparing Regenie to PLINK
+
+Regenie and PLINK can — and often do — disagree on identical data, for reasons worth understanding rather than treating as noise. Complete before the next session:
+
+1. **Run PLINK's `--linear` and `--logistic`** on the same HWE-filtered files using the same covariates. Refer to Session 1 and earlier practicum syntax if needed — re-deriving the exact command is part of the exercise.
+2. **Join Regenie's and PLINK's output by variant ID**, and compare:
+   - Effect size (`BETA`) and direction — do they agree?
+   - P-values — are they numerically similar, or does one tool tend to report smaller/larger p-values than the other?
+   - Which variants disagree most? Is there a pattern (e.g., low minor allele count, high missingness, the case-control-imbalanced binary trait specifically)?
+3. **Write a short paragraph** addressing: given Regenie's LOCO-adjusted whole-genome regression vs. PLINK's single-marker regression, and Regenie's selective Firth correction vs. PLINK's standard logistic regression for the binary trait — where would you expect the two tools to disagree, and does what you observed match that expectation?
+
+---
+
+# Wrap-up
+
+Your analysis directory is on persistent Biowulf storage under your `/data/$USER` allocation, so no additional saving step is needed.
+
+```{bash check-usage}
+du -sh ${analysis_dir}
+```
