@@ -13,7 +13,7 @@ output: html_document
 
 - A basic understanding of genetics, genome-wide association studies (GWAS), and the role of QC in GWAS.
 - Familiarity with the command line, since we will use PLINK (a command-line tool) for QC.
-- A Biowulf HPC account with access to this shared workshop project.
+- A Biowulf HPC account.
 - RStudio launched from NIH OnDemand.
 - **PLINK 1.9 must be loaded before starting your OnDemand RStudio session.**
 
@@ -27,8 +27,10 @@ In this session we will:
 2. Identify markers that deviate from Hardy-Weinberg Equilibrium
 3. Check heterozygosity across samples
 4. Check estimated relatedness (IBD) between samples
-5. Examine population structure using PCA, including a merge with 1000 Genomes reference data to identify ancestry
-6. Infer ancestry directly using GrafAnc, and compare it to the PCA-based approach
+5. Examine population structure using PCA, including a joint analysis with 1000 Genomes (1KG) reference samples to interpret study-sample genetic similarity relative to 1KG reference ancestry labels
+6. Use GrafAnc to obtain reference-based genetic ancestry assignments and compare them with the PCA patterns
+
+**Note: These steps illustrate core GWAS QC concepts but are not an exhaustive production QC protocol.** Depending on the study and genotyping platform, additional checks may include sex-chromosome concordance, duplicate/sample identity checks, batch effects, allele/build harmonization, differential missingness, external allele-frequency comparisons, and post-imputation QC.
 
 ---
 
@@ -169,7 +171,7 @@ plink --bfile ${analysis_dir}/penncath.geno0.01 --mind 0.01 --make-bed --out ${a
 
 # QC Step 2: Hardy-Weinberg Equilibrium (HWE)
 
-For each SNP, we test whether observed genotype frequencies deviate from what's expected under Hardy-Weinberg equilibrium. Large deviations can indicate genotyping error, though they may also reflect true population-genetic phenomena (e.g., selection) or population stratification.
+For each SNP, we test whether observed genotype frequencies deviate from what's expected under Hardy-Weinberg equilibrium. Large deviations can indicate technical artifact or genotyping error, though they may also reflect true population-genetic phenomena (e.g., selection), population stratification.
 
 ```{bash run-hwe}
 
@@ -205,7 +207,7 @@ hwe_stat %>%
 
 # QC Step 3: LD Pruning
 
-Many downstream QC steps (relatedness, heterozygosity, PCA) assume approximately independent markers. We prune markers in high linkage disequilibrium (LD) with their neighbors before those steps.
+Many downstream QC analyses, including PLINK's Identity-by-Descent (IBD), heterozygosity rate, and principal component analysis (PCA), can be influenced by correlated markers in linkage disequilibrium (LD). We therefore use an approximately LD-independent marker set for these analyses so that regions of high LD do not receive disproportionate weight.
 
 Here we use a 50-marker window, sliding 5 markers at a time, removing one marker from any pair with LD (r²) > 0.3.
 
@@ -220,7 +222,7 @@ This produces `.prune.in` (markers to keep) and `.prune.out` (markers to remove)
 
 # QC Step 4: Relatedness (IBD)
 
-We estimate pairwise relatedness (identity by descent, IBD) between all samples, to check for unexpected duplicates or close relatives.
+We estimate pairwise relatedness (IBD) between all samples, to check for unexpected duplicates or close relatives.
 
 ```{bash ibd-check}
 
@@ -247,13 +249,13 @@ ibd %>% ggplot(aes(x = Z0, y = Z1)) +
   theme_classic()
 ```
 
-**Question:** Based on the maximum PI_HAT observed, do we have any duplicate samples or close relatives that should be removed?
+**Question:** Based on the maximum PI_HAT observed, do we have any duplicate samples or close relatives that require additional handling? For an analysis that assumes unrelated individuals, that might mean removing one member of a related pair; alternatively, downstream methods that explicitly model relatedness can retain such samples.
 
 ---
 
 # QC Step 5: Heterozygosity
 
-Samples with unusually high or low heterozygosity can indicate sample contamination, poor DNA quality, or (for low heterozygosity) inbreeding.
+Samples with unusually high or low heterozygosity can reflect technical problems (for example, contamination or genotype-calling artifacts), biological factors such as inbreeding, or differences in genetic ancestry. Heterozygosity outliers should therefore be interpreted together with other QC information rather than treated as diagnostic on their own.
 
 ```{bash het-check}
 
@@ -263,29 +265,29 @@ plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01 --het \
 ```
 
 ```{r het-summary}
-heterozygocity <- fread(file.path(analysis_dir, "penncath.geno0.01.mind0.01.LD0.3.het"))
-heterozygocity <- heterozygocity %>% mutate(het_rate = (`N(NM)` - `O(HOM)`) / `N(NM)`)
+heterozygosity <- fread(file.path(analysis_dir, "penncath.geno0.01.mind0.01.LD0.3.het"))
+heterozygosity <- heterozygosity %>% mutate(het_rate = (`N(NM)` - `O(HOM)`) / `N(NM)`)
 
-heterozygocity %>% ggplot(aes(x = het_rate)) +
+heterozygosity %>% ggplot(aes(x = het_rate)) +
   geom_histogram() +
   labs(title = "Heterozygosity") +
   theme_classic()
 ```
 
-**Question:** Which samples fall more than 3 standard deviations from the mean heterozygosity rate? Should we remove them?
+**Question:** Which samples fall more than 3 standard deviations from the mean heterozygosity rate?
 
 ```{r het-outliers}
-heterozygocity %>%
+heterozygosity %>%
   filter(het_rate < mean(het_rate) - 3*sd(het_rate) |
          het_rate > mean(het_rate) + 3*sd(het_rate))
 ```
 
-**A note on choosing a metric:** the `.het` output also includes a column `F`, PLINK's inbreeding coefficient estimate — a *standardized* measure of homozygosity relative to what's expected given each sample's own allele frequencies (unlike `het_rate`, which is just a raw proportion). A common convention in published GWAS QC pipelines is to exclude samples with `F > 0.1` or `F < -0.1` (some pipelines use a more relaxed `0.2` instead).
+**A note on choosing a metric:** the `.het` output also provides `F`, PPLINK’s method-of-moments inbreeding coefficient estimate, alongside raw counts.  While `het_rate` measures the simple proportion of heterozygous calls, `F` contrasts observed individual homozygosity against the baseline expected from cohort allele frequencies (e.g., populations that underwent historic genetic bottlenecks aturally have lower overall baseline heterozygosity than populations with highly admixed histories). Crucially, because `F` calculations rely on a specific dataset's allele-frequency reference, uncorrected population stratification will distort its distribution. Fixed cutoffs such as `|F| > 0.1` (or, in some pipelines, `|F| > 0.2`) are sometimes used, but they are not universal; dataset-specific outlier rules such as ±3 SD, ideally evaluated within genetically comparable groups, are also common.
 
 Try applying that threshold to this same data:
 
 ```{r het-F-threshold}
-heterozygocity %>%
+heterozygosity %>%
   filter(F > 0.1 | F < -0.1)
 ```
 
@@ -295,7 +297,9 @@ heterozygocity %>%
 
 # QC Step 6: Population Structure (PCA)
 
-We use Principal Component Analysis (PCA) on our pruned, common markers to assess population structure. **Important:** always calculate PCs on LD-pruned data — using unpruned markers can produce misleading components driven by local LD structure rather than genome-wide ancestry signal.
+We use Principal Component Analysis (PCA) on common-frequency, LD-pruned markers to summarize major axes of genome-wide genetic variation. PCA does not measure ancestry directly: the resulting components can reflect genetic ancestry and demographic history, but they can also be affected by technical artifacts. For PLINK PCA, it is usually best to use markers in approximate LD; otherwise, regions of strong or long-range LD can disproportionately influence individual components. We also apply `--maf 0.05` to focus this reference-based PCA on common variants; low-frequency variants can generate sample-specific structure and are generally less useful for visualizing broad population structure in this setting.
+
+**Terminology:** throughout this workshop, *genetic ancestry* refers to patterns of genetic similarity inferred relative to reference samples or statistical models. It is not interchangeable with self-identified race, ethnicity, nationality, or personal identity.
 
 ```{bash simple-pca}
 
@@ -320,17 +324,17 @@ pca %>% rename(PC2 = V4, PC3 = V5) %>%
   theme_classic()
 ```
 
-**Question:** Do you see distinct clusters in this plot? What might explain them? We'll investigate this further below by comparing to a reference panel with known ancestry labels.
+**Question:** Do you see distinct clusters in this plot? What might explain them? We'll investigate whether the pattern aligns with 1000 Genomes reference population structure below, while keeping in mind that PCA clustering can also reflect technical effects.
 
 ---
 
-# QC Step 7: Ancestry via 1000 Genomes Merge
+# QC Step 7: Reference-based PCA with 1000 Genomes
 
-To interpret the clustering seen in our PCA, we merge our data with a reference panel of known-ancestry samples from the 1000 Genomes Project.
+To help interpret the clustering seen in our study-only PCA, we merge PennCATH with 1000 Genomes (1KG) reference samples that have published population and superpopulation labels (defined initially using sampling criteria based on geography, community engagement, and strict self-reported grandparental ancestry). These labels provide a reference frame for genetic similarity on the PCs; they should not be treated as categorical ground truth for an individual's ancestry.
 
 ## Attempt the merge
 
-`--bmerge` combines PennCATH (the base dataset) with the 1000 Genomes reference (the dataset being merged in). The result is the **union** of samples (all PennCATH + all 1000G individuals) and the **union** of variants (any marker present in either file) — not just the overlap. Genotypes are only present where the original source dataset actually had data for that marker/sample combination.
+`--bmerge` combines PennCATH (the base dataset) with the 1000 Genomes reference (the dataset being merged in). The result is the **union** of samples (all PennCATH + all 1000G individuals) and the **union** of variants (any marker present in either file).
 
 ```{bash merge-1kg}
 
@@ -341,11 +345,11 @@ plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01 \
       --make-bed --out ${analysis_dir}/penncath.geno0.01.mind0.01.merge1kgenomes || true
 ```
 
-This is expected to fail. Genotyping arrays and reference panels don't always report alleles relative to the same DNA strand, so PLINK sees an apparent conflict (more than 2 alleles) at overlapping markers. This is a **strand orientation mismatch**, not evidence of true multiallelic variation.
+When a binary merge fails and PLINK writes a `.missnp` file, the listed variants have allele combinations that would appear to contain more than two alleles after merging. Strand-orientation mismatches are a common cause, but genuine multiallelic variants, allele-coding inconsistencies, or other data errors can produce the same symptom.
 
 ## Flip mismatched markers
 
-`--flip` takes the complementary base (A↔T, C↔G) for the flagged markers, which corrects non-palindromic strand mismatches. (Note: A/T and C/G markers are ambiguous and cannot be resolved this way — a small residual risk we accept for this teaching exercise.)
+`--flip` complements the allele codes (A↔T and C↔G) for the flagged variants. If most merge conflicts disappear after the flip, that supports strand orientation as the explanation for those variants. Palindromic A/T and C/G SNPs remain strand-ambiguous from allele labels alone, so a production analysis would typically resolve them with additional reference/allele-frequency information or exclude ambiguous variants when appropriate.
 
 ```{bash flip-snps}
 
@@ -368,11 +372,11 @@ plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01_flipSNPs \
 
 ## PCA on the merged dataset
 
-The merged dataset now contains the union of PennCATH's and 1000 Genomes' variants. Most markers are genotyped in only one of the two source datasets — a marker unique to PennCATH is missing in essentially all 2,504 1000 Genomes samples (missingness ≈ 2,504/3,884 ≈ 64.5%), and a marker unique to 1000 Genomes is missing in essentially all 1,380 PennCATH samples (missingness ≈ 1,380/3,884 ≈ 35.5%). Applying `--geno 0.1` (a 10% missingness filter) drops both categories of cohort-unique markers, leaving mostly the small set of markers both cohorts genotyped in common. We also apply `--maf 0.05` to exclude rare variants, which tend to add noise to PCA.
+The merged dataset now contains the union of PennCATH's and 1000 Genomes' variants. Most markers are genotyped in only one of the two source datasets — a marker unique to PennCATH is missing in essentially all 2,504 1000 Genomes samples (missingness ≈ 2,504/3,884 ≈ 64.5%), and a marker unique to 1000 Genomes is missing in essentially all 1,380 PennCATH samples (missingness ≈ 1,380/3,884 ≈ 35.5%). Applying `--geno 0.1` (a 10% missingness filter) drops both categories of cohort-unique markers, leaving mostly the small set of markers both cohorts genotyped in common.
 
 (Note: the exact missingness percentage for a cohort-unique marker depends on the relative sizes of the two cohorts being merged — it isn't a fixed number in general, though in our case both categories comfortably exceed the 10% threshold.)
 
-**Note:** unlike the study-only PCA above, we do not apply an additional LD-pruning step (`--extract .prune.in`) here. The 1000 Genomes reference marker panel (`all_pops_1kgenomes_markersForPCA`) was already curated specifically for ancestry PCA, so re-pruning on top of it isn't necessary — and our own `.prune.in` file was built for PennCATH's full marker set, not this much smaller shared-marker set.
+**Note:** unlike the study-only PCA above, we do not apply the PennCATH `.prune.in` list here because it was created from PennCATH's full marker set, not from the much smaller set of variants shared after the merge. For this teaching workflow, we use the provided `all_pops_1kgenomes_markersForPCA` marker set (already pre-pruned for LD) as supplied. In a production analysis, verify that the final shared marker set is appropriately controlled for LD before computing PCs.
 
 ```{bash merged-pca}
 
@@ -381,14 +385,14 @@ plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01.merge1kgenomes \
       --out ${analysis_dir}/penncath.geno0.01.mind0.01.merge1kgenomes
 ```
 
-## Get 1000 Genomes population labels
+## Get 1KG reference ancestry labels
 
 ```{bash clone-akt}
 cd ${analysis_dir}
 git clone https://github.com/Illumina/akt.git
 ```
 
-## Plot ancestry-labeled PCA
+## Plot PCA with 1KG reference ancestry labels
 
 ```{r plot-merged-pca}
 library(tidyverse)
@@ -403,32 +407,43 @@ pc_with1kgenomes <- pc_with1kgenomes %>%
   rename(PC1 = V3, PC2 = V4, PC3 = V5) %>%
   left_join(pop_info_1kgenomes, by = c("V1" = "sample"))
 
-ggplot(pc_with1kgenomes, aes(x = PC1, y = PC2, color = super_pop)) +
-  geom_point(data = subset(pc_with1kgenomes, is.na(super_pop)), color = "black", alpha = 1) +
-  geom_point(alpha = 0.5) +
-  labs(title = "PC1 vs. PC2") +
+ggplot(pc_with1kgenomes, aes(x = PC1, y = PC2)) +
+  geom_point(
+    data = subset(pc_with1kgenomes, !is.na(super_pop)),
+    aes(color = super_pop), alpha = 0.5
+  ) +
+  geom_point(
+    data = subset(pc_with1kgenomes, is.na(super_pop)),
+    color = "black", alpha = 1
+  ) +
+  labs(title = "PC1 vs. PC2", color = "1KG ref ancestry labels") +
   theme_classic()
 
-ggplot(pc_with1kgenomes, aes(x = PC2, y = PC3, color = super_pop)) +
-  geom_point(data = subset(pc_with1kgenomes, is.na(super_pop)), color = "black", alpha = 1) +
-  geom_point(alpha = 0.5) +
-  labs(title = "PC2 vs. PC3") +
+ggplot(pc_with1kgenomes, aes(x = PC2, y = PC3)) +
+  geom_point(
+    data = subset(pc_with1kgenomes, !is.na(super_pop)),
+    aes(color = super_pop), alpha = 0.5
+  ) +
+  geom_point(
+    data = subset(pc_with1kgenomes, is.na(super_pop)),
+    color = "black", alpha = 1
+  ) +
+  labs(title = "PC2 vs. PC3", color = "1KG ref ancestry labels") +
   theme_classic()
 ```
 
-Our study samples (black/NA points, since they aren't in the 1000 Genomes panel) should cluster tightly with one of the labeled superpopulations: AFR (African), AMR (admixed American), EAS (East Asian), EUR (European), or SAS (South Asian). This tells us the predominant ancestry of our cohort, and helps explain any clustering we saw in the study-only PCA above — fine-scale structure *within* a single superpopulation can still produce visible clusters, even when everyone shares the same broad continental ancestry.
-
+PennCATH study samples are shown in black. In these PC plots, the PennCATH samples lie predominantly within or very close to the cluster formed by 1KG samples carrying the **EUR** reference label. Thus, at the resolution of these PCs and this reference marker set, the PennCATH samples are genetically most similar to the 1KG-defined EUR cluster. This should be interpreted as reference-based genetic similarity, not as a categorical determination that every participant is "European." Fine-scale structure, admixture, reference-panel choice, marker selection, and technical effects can all influence PC placement.
 ---
 
-# QC Step 8: Fast Ancestry Inference with GrafAnc
+# QC Step 8: Genetic Ancestry Assignment with GrafAnc
 
-In QC Step 7, we inferred ancestry manually: merging with a 1000 Genomes reference panel, resolving strand mismatches, and running PCA on the combined dataset. This approach is transparent and pedagogically useful, but it's slow and involves several fragile steps (the merge conflict, the flip, re-running PCA).
+In Step 7, we used joint PCA with 1KG reference-labeled samples to place PennCATH genetic variation in a reference context. It requires careful allele harmonization and several manual processing steps.
 
-[GrafAnc](https://github.com/jimmy-penn/grafanc) is a purpose-built tool that infers genetic ancestry directly from your genotype data in seconds, without needing to merge with an external reference panel. It compares each sample's genotypes against a curated panel of 282,424 ancestry-informative SNPs and assigns both a continental-level and sub-continental-level ancestry group, along with continuous ancestry scores.
+[GrafAnc](https://github.com/jimmy-penn/grafanc/blob/master/GrafAncDocumentation.md) is a purpose-built tool that estimates genetic ancestry from genotype data without requiring a study-by-study merge with an external reference panel. It uses 282,424 pre-selected biallelic ancestry SNPs to calculate reference-based genetic-distance scores and assigns continental- and subcontinental-level ancestry groups. These are algorithmic assignments relative to GrafAnc's reference populations, not direct measurements of race, ethnicity, or personal identity.
 
-We'll run GrafAnc on our QC'd PennCATH data and compare its calls to the PCA-based clustering from Step 7.
+We'll run GrafAnc on our QC'd PennCATH data and compare its assignments with the reference-based PCA pattern from Step 7.
 
-**Note:** GrafAnc requires unique sample IDs. PennCATH's `.fam` file has identical within-family IDs (all `1`), which GrafAnc will otherwise flag. We first create a version of the dataset with unique IDs.
+**Note:** GrafAnc requires unique sample identifiers. Because the PennCATH within-family IDs are not unique, we first create unique IIDs by combining the existing family and within-family IDs.
 
 ## Set up unique sample IDs
 
@@ -446,7 +461,7 @@ plink --bfile ${analysis_dir}/penncath.geno0.01.mind0.01 --update-ids \
 
 ## Install GrafAnc
 
-GrafAnc isn't available as a Biowulf module, so we install it directly from GitHub into your own analysis directory. This only needs to be done once per session.
+For this workshop, we use GrafAnc directly from its GitHub repository in your analysis directory. Because that directory is persistent, the clone only needs to be created once; the code below skips the clone when it is already present.
 
 ```{bash grafanc-install}
 
@@ -466,8 +481,6 @@ ls ${analysis_dir}/grafanc/bin/
 
 ## Run GrafAnc
 
-GrafAnc needs two things that aren't there by default on Biowulf: the `htslib` shared library (we get this by loading the `bcftools` module) and its own reference data directory (we point it there with `GRAFPATH`). Both are handled in the chunk below — you shouldn't need to think about them further.
-
 ```{bash run-grafanc}
 module load bcftools/1.23
 export GRAFPATH=${analysis_dir}/grafanc/cpp
@@ -479,9 +492,11 @@ ${analysis_dir}/grafanc/bin/grafanc \
 head ${analysis_dir}/penncath_grafanc_out.txt
 ```
 
-This produces one row per sample, including continuous ancestry-component scores (`GD1-3`, `EA1-4`, `AF1-3`, `EU1-3`, `SA1-2`, `IC1-3`), estimated continental ancestry proportions (`Pe`, `Pf`, `Pa`: percent European, African, East Asian), and an assigned `AncGroupID` — a 3-digit code where the first digit indicates continental ancestry (e.g., `3xx` = European, `1xx` = African, `5xx` = East Asian) and the full code indicates a finer sub-continental group (e.g., `303` = Western Europe).
+This produces one row per sample, including continuous genetic-distance/contrast scores (`GD1-3`, `EA1-4`, `AF1-3`, `EU1-3`, `SA1-2`, `IC1-3`), three GrafAnc ancestry-component estimates (`Pe`, `Pf`, `Pa`, corresponding to European-, African-, and East-Asian-referenced components), and an assigned `AncGroupID`. The first digit of `AncGroupID` encodes the continental-level GrafAnc group (for example, `3xx` = EUR, `1xx` = AFR, `5xx` = EAS), while the full code specifies a finer reference-based group (for example, `303` = Western Europe). `Pe`, `Pf`, and `Pa` are components of GrafAnc's three-reference model; they should not be interpreted as a complete decomposition across every GrafAnc group such as South Asian or Middle East/North Africa.
 
 ## Visualize GrafAnc ancestry scores
+
+Where does each individual's genome fall in a genetic-ancestry coordinate space defined by European, African, and East Asian reference populations?
 
 ```{r plot-grafanc}
 library(tidyverse)
@@ -493,27 +508,33 @@ grafanc_out <- fread(file.path(analysis_dir, "penncath_grafanc_out.txt"))
 
 # GrafAnc's continental-level ancestry group is encoded in the first digit of AncGroupID
 grafanc_out <- grafanc_out %>%
-  mutate(ContinentalGroup = case_when(
-    AncGroupID >= 100 & AncGroupID < 200 ~ "AFR",
-    AncGroupID >= 200 & AncGroupID < 300 ~ "MENA",
-    AncGroupID >= 300 & AncGroupID < 400 ~ "EUR",
-    AncGroupID >= 400 & AncGroupID < 500 ~ "SAS",
-    AncGroupID >= 500 & AncGroupID < 600 ~ "EAS",
-    AncGroupID >= 600 & AncGroupID < 700 ~ "AMR",
-    AncGroupID >= 700 & AncGroupID < 800 ~ "OCN",
-    AncGroupID >= 800 ~ "MIX",
-    TRUE ~ NA_character_
-  ))
+  mutate(
+    ContinentalGroup = recode(
+      AncGroupID %/% 100,
+      `1` = "AFR",
+      `2` = "MEN",
+      `3` = "EUR",
+      `4` = "SAS",
+      `5` = "EAS",
+      `6` = "AMR",
+      `7` = "OCN",
+      `8` = "MIX",
+      .default = NA_character_
+    )
+  )
 
 grafanc_out %>% ggplot(aes(x = GD1, y = GD2, color = ContinentalGroup)) +
   geom_point(alpha = 0.6) +
-  labs(title = "GrafAnc Continental Ancestry (GD1 vs. GD2)") +
+  labs(
+    title = "GrafAnc-assigned genetic ancestry (GD1 vs. GD2)",
+    color = "GrafAnc-assigned ancestry group"
+  ) +
   theme_classic()
 
 grafanc_out %>% count(ContinentalGroup, sort = TRUE)
 ```
 
-**Question:** How does the shape and clustering of this GD1 vs. GD2 plot compare to the PC1 vs. PC2 plot from Step 6? Do you see a similar number of clusters?
+**Note:** GD1 and GD2 are genetic-distance coordinates derived from the subject's relationship to European (E), African (F), and East Asian (A) reference populations; their position within the E–F–A reference triangle is then used to estimate continental ancestry proportions (Pe, Pf, Pa).
 
 ## Summarize GrafAnc ancestry calls for the cohort
 
@@ -523,9 +544,7 @@ grafanc_out %>%
   mutate(percent = round(100 * n / sum(n), 1))
 ```
 
-**Question:** Consistent with the manual PCA clustering from Steps 6–7, this cohort is overwhelmingly one continental ancestry group. Which sub-continental `AncGroupID` groups make up the bulk of samples, and does that match what you'd expect for a Philadelphia-based coronary artery disease study (PennCATH)? (You should find the cohort is >99% European, split across several European sub-groups, plus a handful of Middle East/North Africa samples — a finer breakdown than a simple "European vs. non-European" split.)
-
-**Question:** Are there any samples assigned to a different continental or sub-continental group than the majority? These are good candidates to cross-check against the PCA plot from Step 6 — do they also appear as outliers there?
+**Question:** How do the GrafAnc assignments compare with the reference-based PCA pattern from Steps 6–7? In this dataset, you should find that >99% of samples receive GrafAnc's **EUR** continental-group assignment, distributed across several European subgroups, with a small number assigned to the **MEN** (Middle East and North Africa) group.
 
 ---
 
@@ -534,11 +553,9 @@ grafanc_out %>%
 We now have HWE statistics for each marker, heterozygosity estimates per sample, pairwise relatedness (IBD) estimates, and GrafAnc ancestry calls for each sample. Using these:
 
 1. Choose a HWE p-value threshold and justify your choice.
-2. Choose and apply a threshold for excluding samples based on heterozygosity, and separately for relatedness. **Note:** a correct, well-justified analysis may conclude that no samples need to be excluded on one or both of these criteria — that is a legitimate outcome, not a sign you did something wrong. The goal is to apply and justify a defensible method, not to guarantee you find something to remove.
-3. **Optional:** Consider whether GrafAnc's ancestry calls suggest any samples should be excluded or flagged before downstream GWAS analysis (e.g., ancestry outliers relative to the bulk of the cohort). This is a judgment call — there is no single correct answer, and a well-reasoned decision to retain all samples is as valid as a decision to exclude some, depending on your study's goals.
-4. Use PLINK to produce a final, fully-filtered dataset (`--hwe`, `--remove`, etc. as appropriate) ready for downstream GWAS analysis.
-
-📓 **Hint:** The [PLINK 1.9 Input Filtering documentation](https://www.cog-genomics.org/plink/1.9/filter) covers the relevant flags.
+2. Choose and apply a threshold for excluding samples based on heterozygosity, and separately for relatedness. **Note:** a well-justified analysis may conclude that no samples need to be excluded on one or both of these criteria. The goal is to apply and justify a defensible method, not to guarantee you find something to remove.
+3. **Optional:** Consider whether the study design or analysis plan calls for flagging samples whose genetic-structure patterns differ from the main cohort. Do not exclude a sample solely because its GrafAnc label differs from the majority. Depending on the scientific question and analysis method, defensible options can include retaining all samples with appropriate population-structure adjustment, conducting stratified analyses, or restricting an analysis to a more genetically homogeneous subset when that restriction is scientifically justified and prespecified.
+4. Use PLINK to produce a QC-filtered dataset (`--hwe`, `--remove`, etc. as appropriate) based on the criteria covered in this workshop.
 
 ```{bash exercise-code}
 # Your code here
@@ -548,7 +565,7 @@ We now have HWE statistics for each marker, heterozygosity estimates per sample,
 
 # Wrap-up
 
-Your analysis directory is on persistent Biowulf storage under your `/data/$USER` allocation, so no additional saving step is needed. Note that this now includes your `grafanc/` clone (roughly 30 MB, mostly the ancestry SNP reference panel) — this persists too, so you won't need to re-clone it in a future session; the setup chunk in QC Step 8 checks for it and skips the clone if it already exists.
+Your analysis directory is on persistent Biowulf storage under your `/data/$USER` allocation, so no additional saving step is needed. Note that this now includes your `grafanc/` clone (roughly 30 MB), so you won't need to re-clone it in a future session.
 
 To check your total disk usage for this session:
 
