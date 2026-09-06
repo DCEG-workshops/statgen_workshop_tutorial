@@ -5,20 +5,20 @@ output: html_document
 
 # Objectives
 
-- Inspect a harmonized, regional BCAC2017 iCOGS dataset at the **TERT** breast-cancer susceptibility locus.
+- Inspect a harmonized, regional BCAC2017 dataset at the **TERT** breast-cancer susceptibility locus.
 - Install and test METASOFT on Biowulf.
-- Run fixed-effect, conventional random-effect, and Han-Eskin RE2 meta-analysis across AFR, ASN, and EUR ancestry-specific summary statistics.
-- Use Cochran's Q, I², and M-values to interpret cross-ancestry heterogeneity.
-- Visualize regional fixed-effect results, FE-vs-RE2 behavior, ancestry-specific effect sizes, and M-values.
+- Run fixed-effect, conventional random-effects, and Han-Eskin RE2 meta-analysis across AFR, ASN, and EUR ancestry-specific summary statistics.
+- Use Cochran's Q, I², forest plots, and M-values to describe heterogeneity across ancestry strata.
+- Visualize regional fixed-effect results, FE-versus-RE2 evidence, ancestry-specific effect estimates, and M-values.
 
 # Prerequisites
 
-- A Biowulf HPC account with access to the shared `statgen_workshop_2026` project.
+- A Biowulf HPC account.
 - RStudio launched from NIH OnDemand.
 
 # Workshop Overview
 
-Today we will meta-analyze AFR, ASN, and EUR ancestry-specific iCOGS breast-cancer GWAS summary statistics from BCAC2017.
+Today we will meta-analyze AFR, ASN, and EUR ancestry-specific breast-cancer GWAS summary statistics from BCAC2017. In METASOFT terminology, each ancestry-specific GWAS stratum is treated as a separate “study” because it contributes one beta/SE pair per variant.
 
 The raw BCAC2017 files are millions of rows, so this practical starts from a prepared **TERT** window on chromosome 5. We will focus on:
 
@@ -27,7 +27,7 @@ The raw BCAC2017 files are millions of rows, so this practical starts from a pre
 3. run the standard and M-value METASOFT analyses;
 4. parse METASOFT's output;
 5. compare fixed-effect and RE2 evidence;
-6. interpret heterogeneity with Q, I², ancestry-specific betas, and M-values.
+6. examine heterogeneity with Q, I², ancestry-specific betas, forest plots, and M-values.
 
 **External resources**
 
@@ -141,15 +141,15 @@ done
 
 ## Cleaning and harmonization framework
 
-The prepared TERT dataset follows the same logic that you would use for any meta-analysis of GWAS summary statistics:
+The prepared TERT dataset follows the same core logic used in meta-analysis of GWAS summary statistics:
 
 1. **Select comparable effect estimates.** Keep one beta and standard error for the same phenotype from each ancestry-specific file.
 2. **Normalize columns.** Put study-specific column names into one schema: variant ID, chromosome, position, allele pair, effect allele, beta, SE, p-value, allele frequency, and imputation quality.
 3. **Use one genome build.** Here all positions are GRCh37/hg19.
 4. **Resolve effect alleles.** All beta values must refer to the same allele before they can be meta-analyzed.
-5. **Check shared variant IDs.** A shared `variant_id` must map to one chromosome, position, allele pair, and resolved effect allele.
-6. **Harmonize effect direction.** If a study reports the opposite allele, multiply beta by `-1` and replace EAF by `1 - EAF`.
-7. **Keep a union matrix.** Variants absent from an ancestry get `NA` for that ancestry's beta and SE.
+5. **Check variant identity.** A shared `variant_id` must map consistently to one chromosome, position, allele pair, and resolved effect allele. Variant ID alone is not sufficient for allele harmonization.
+6. **Harmonize effect direction.** If an ancestry-specific result uses the opposite effect allele, multiply beta by `-1`; when EAF is defined for that same effect allele, replace EAF by `1 - EAF`.
+7. **Keep a union matrix.** Variants absent from an ancestry receive `NA` for that ancestry's beta and SE.
 
 For this class, the instructor applied those steps to the TERT region:
 
@@ -166,7 +166,7 @@ The final union contains:
 13,591 total TERT variants
 ```
 
-Palindromic SNVs and multi-base alleles are kept when they match exactly by `variant_id`.
+Palindromic SNVs and multi-base alleles were retained in this prepared dataset only after the instructor's consistency checks on variant identity and allele coding. In a new dataset, palindromic SNVs require particular care because strand orientation cannot be resolved from the allele pair alone.
 
 ## METASOFT input format
 
@@ -215,7 +215,7 @@ harmonized_long[, .(
 
 ## Union overlap across ancestries
 
-A variant can be present in one, two, or all three ancestries. Variants present in only one ancestry stay in the long table and METASOFT input, but only variants with at least two ancestry-specific beta/SE pairs can be meta-analyzed.
+A variant can be present in one, two, or all three ancestry strata. Variants present in only one ancestry remain in the long table and METASOFT input, but at least two non-missing beta/SE pairs are needed for a cross-stratum meta-analysis or heterogeneity statistic.
 
 ```{r union-overlap}
 variant_overlap <- harmonized_long[, .(
@@ -258,7 +258,7 @@ metasoft_input_preview[, .(
 
 # Step 2: Install METASOFT
 
-METASOFT is not currently a Biowulf module, so for the workshop we install a copy of METASOFT into each student's personal `/data` directory. The package is small and contains both `Metasoft.jar` and `HanEskinPvalueTable.txt`, the tabulated p-value file used for RE2.
+METASOFT is not currently a Biowulf module, so for the workshop we install a copy of METASOFT into our personal `/data` directory. The package is small and contains both `Metasoft.jar` and `HanEskinPvalueTable.txt`, the tabulated p-value file used for RE2.
 
 ## Confirm Java
 
@@ -365,9 +365,9 @@ So the log line `Number of SNPs analyzed: 6290` is expected.
 
 # Step 4: Run METASOFT with M-Values
 
-An M-value is the posterior probability that an effect exists in a particular study. With three ancestry-specific studies, exact M-value calculation is fast.
+An M-value is METASOFT's model-based posterior probability that a nonzero effect is present in a particular study, conditional on the observed study estimates and the M-value priors.
 
-The METASOFT default only computes M-values for SNPs whose FE or RE2 p-value is below `1e-7`. To make M-values visible throughout this small regional exercise, we set `-mvalue_p_thres 1`.
+By default, METASOFT computes M-values only for variants whose FE or RE2 p-value is below `1e-7`. For this teaching exercise, we set `-mvalue_p_thres 1` so that M-values are available across the full regional output. This is useful for visualization, but M-values should still be interpreted as posterior probabilities under METASOFT's model and priors rather than as definitive labels of whether an effect is biologically present or absent.
 
 ```{bash run-metasoft-mvalue}
 
@@ -386,41 +386,29 @@ head -n 5 "${analysis_dir}/bcac2017_tert_metasoft_mvalue.out"
 
 # Step 5: Parse the METASOFT Results
 
-METASOFT's last two header labels each stand in for three tab-delimited columns: one per-study p-value for AFR, ASN, and EUR, and one M-value for AFR, ASN, and EUR. We read by position and then assign clearer names.
+The METASOFT output is not yet convenient for plotting in R. The first 16 columns contain the meta-analysis statistics, followed by one single-study p-value and one M-value for each input study. In the output header, `PVALUES_OF_STUDIES` and `MVALUES_OF_STUDIES` are group labels rather than unique names for every study-specific column. Because our input order is AFR, ASN, EUR, we assign those names explicitly.
+
+This parsing step is needed for three practical reasons:
+
+1. **Give every output column a unique, meaningful name.** Otherwise the AFR/ASN/EUR p-values and M-values are difficult to address reliably in R.
+2. **Check that the file structure is what we expect.** The column-count and row-count checks catch an unexpectedly formatted METASOFT output before we make plots.
+3. **Restore genomic annotation.** METASOFT carries the variant ID but not our chromosome position or allele annotations, so we join the results back to `variant_key`.
+
+## Read and name the METASOFT columns
 
 ```{r parse-metasoft-output}
 metasoft_mvalue_file <- file.path(analysis_dir, "bcac2017_tert_metasoft_mvalue.out")
+study_names <- c("AFR", "ASN", "EUR")
 
 metasoft_colnames <- c(
-  "variant_id",
-  "num_study",
-
-  "p_fe",
-  "beta_fe",
-  "se_fe",
-
-  "p_re",
-  "beta_re",
-  "se_re",
-
-  "p_re2",
-  "stat1_re2",
-  "stat2_re2",
-
+  "variant_id", "num_study",
+  "p_fe", "beta_fe", "se_fe",
+  "p_re", "beta_re", "se_re",
+  "p_re2", "stat1_re2", "stat2_re2",
   "p_be",
-
-  "i_square",
-  "q",
-  "p_q",
-  "tau_square",
-
-  "p_AFR",
-  "p_ASN",
-  "p_EUR",
-
-  "m_AFR",
-  "m_ASN",
-  "m_EUR"
+  "i_square", "q", "p_q", "tau_square",
+  paste0("p_", study_names),
+  paste0("m_", study_names)
 )
 
 meta_raw <- fread(
@@ -432,9 +420,7 @@ meta_raw <- fread(
   showProgress = FALSE
 )
 
-cat("METASOFT raw column count:", ncol(meta_raw), "
-")
-
+# Some tab-delimited outputs can contain a completely empty trailing column.
 is_empty_col <- function(x) {
   all(is.na(x) | trimws(as.character(x)) == "")
 }
@@ -444,19 +430,21 @@ while (ncol(meta_raw) > length(metasoft_colnames) &&
   meta_raw[, (names(meta_raw)[ncol(meta_raw)]) := NULL]
 }
 
-stopifnot(ncol(meta_raw) == length(metasoft_colnames))
+if (ncol(meta_raw) != length(metasoft_colnames)) {
+  stop(
+    "Unexpected METASOFT column count: found ", ncol(meta_raw),
+    "; expected ", length(metasoft_colnames), "."
+  )
+}
 
 setnames(meta_raw, metasoft_colnames)
 meta <- meta_raw
+```
 
-meta_qc <- meta[
-  ,
-  .N,
-  by = num_study
-][
-  order(num_study)
-]
+## Check the parsed rows and add genomic annotation
 
+```{r annotate-metasoft-output}
+meta_qc <- meta[, .N, by = num_study][order(num_study)]
 print(meta_qc)
 
 stopifnot(nrow(meta) == 13591)
@@ -473,7 +461,6 @@ stopifnot(!anyNA(meta_annotated$pos_b37))
 
 head(meta_annotated)
 ```
-
 
 ## Check the parsed columns
 
@@ -495,7 +482,7 @@ meta_annotated[
 head(meta_annotated)
 ```
 
-Rows with `num_study == 1` have a single-study p-value but `NA` for `p_fe`, `p_re2`, `q`, and `i_square`: there is no cross-study evidence to combine and no between-study heterogeneity to estimate.
+Rows with `num_study == 1` retain the available single-study p-value, but `p_fe`, `p_re2`, `q`, and `i_square` are `NA`: with only one non-missing ancestry-specific estimate, there is no cross-stratum meta-analysis or between-stratum heterogeneity to calculate.
 
 ---
 
@@ -503,7 +490,7 @@ Rows with `num_study == 1` have a single-study p-value but `NA` for `p_fe`, `p_r
 
 ## Top fixed-effect hits
 
-The fixed-effect model is the inverse-variance-weighted estimate of one shared effect across studies.
+The fixed-effect model assumes one common underlying effect across the included ancestry strata and estimates it by inverse-variance weighting.
 
 ```{r top-fe-hits}
 top_fe <- meta_annotated[
@@ -532,7 +519,7 @@ head(top_fe, 10)
 
 ## Top RE2 hits
 
-RE2 tests for association while allowing effects to differ across studies. Unlike FE and the conventional RE model, RE2 reports a p-value but no combined beta and SE.
+RE2 is an association test designed to retain power when effects are heterogeneous across studies. Its statistic combines evidence from a mean-effect component and a heterogeneity component. Unlike FE and the conventional random-effects model, METASOFT reports an RE2 p-value but not a single combined RE2 beta and SE.
 
 ```{r top-re2-hits}
 top_re2 <- meta_annotated[
@@ -560,7 +547,7 @@ head(top_re2, 10)
 
 ## High-heterogeneity three-ancestry variants
 
-Here we only inspect variants present in all three ancestries.
+Here we only inspect variants present in all three ancestry strata. With only three estimates per variant, I² and Q are noisy measures of heterogeneity, so use this ranking as a screening device and inspect the underlying ancestry-specific estimates before drawing conclusions.
 
 ```{r top-heterogeneous-hits}
 heterogeneous_hits <- meta_annotated[
@@ -618,7 +605,11 @@ p_regional_fe <- ggplot(
   geom_point(alpha = 0.75, size = 2) +
   geom_point(
     data = lead_fe,
-    aes(x = pos_b37, y = -log10(p_fe)),
+    aes(
+      x = pos_b37,
+      y = -log10(p_fe),
+      shape = factor(num_study)
+    ),
     inherit.aes = FALSE,
     size = 4
   ) +
@@ -631,6 +622,10 @@ p_regional_fe <- ggplot(
     vjust = -0.4,
     size = 3
   ) +
+  scale_shape_manual(
+    values = c("2" = 17, "3" = 16),
+    labels = c("2" = "2", "3" = "3")
+  ) +
   scale_x_continuous(labels = scales::comma) +
   scale_y_continuous(
     limits = c(0, NA),
@@ -639,7 +634,7 @@ p_regional_fe <- ggplot(
   labs(
     x = "GRCh37 position on chromosome 5",
     y = expression(-log[10](P[FE])),
-    shape = "Ancestries",
+    shape = "No. of ancestry strata",
     title = "TERT regional association: fixed-effect meta-analysis"
   ) +
   theme_bw()
@@ -649,7 +644,7 @@ p_regional_fe
 
 ## Fixed-effect versus RE2 p-values
 
-Points above the dashed line are more significant under RE2 than under FE.
+This plot compares the strength of association evidence from FE and RE2 for the same variants. Points above the dashed line have smaller p-values under RE2 than under FE; color shows I² to help identify whether departures from the diagonal coincide with estimated heterogeneity.
 
 ```{r plot-fe-vs-re2, fig.width=6, fig.height=5}
 fe_re2_df <- meta_annotated[
@@ -676,32 +671,11 @@ ggplot(
   theme_bw()
 ```
 
-## Association strength versus I²
-
-```{r plot-heterogeneity, fig.width=6, fig.height=5}
-ggplot(
-  meta_annotated[
-    num_study == 3 &
-      is.finite(p_fe) &
-      p_fe > 0 &
-      is.finite(i_square)
-  ],
-  aes(x = -log10(p_fe), y = i_square)
-) +
-  geom_point(alpha = 0.8, size = 2) +
-  labs(
-    x = expression(-log[10](P[FE])),
-    y = expression(I^2),
-    title = "Association strength versus heterogeneity"
-  ) +
-  theme_bw()
-```
-
 ---
 
 # Step 8: Forest Plots for Individual Variants
 
-A forest plot shows the ancestry-specific log odds ratios that went into the meta-analysis.
+A forest plot shows the ancestry-specific log odds-ratio estimates and 95% confidence intervals that contribute to the meta-analysis.
 
 ## Fixed-effect lead variant
 
@@ -763,7 +737,7 @@ ggplot(
   theme_bw()
 ```
 
-The fixed-effect estimate is not the arithmetic mean of AFR, ASN, and EUR. It is precision-weighted, so ancestry estimates with smaller SEs contribute more strongly.
+The fixed-effect estimate is inverse-variance weighted, so estimates with smaller SEs receive more weight.
 
 
 ## A high-I² variant
@@ -859,13 +833,13 @@ ggplot(
   theme_bw()
 ```
 
-For this variant, the fixed-effect estimate is close to 0 because the ancestry-specific estimates are not consistent with one shared effect. RE2 does not report its own beta; its small p-value comes from combining mean-effect and heterogeneity evidence. The M-values localize which ancestry carries the effect.
+For this variant, compare the fixed-effect estimate with the ancestry-specific estimates rather than assuming that a high I² has a single cause. RE2 does not report its own combined beta; its p-value uses both mean-effect and heterogeneity components. The M-values provide model-based evidence about which ancestry strata are more compatible with a nonzero effect, but they do not by themselves establish ancestry-specific biological effect modification.
 
 ---
 
 # Step 9: M-Value Heatmap
 
-The M-value columns estimate the posterior probability that an effect exists in each ancestry-specific study. Values near 1 suggest the effect is likely present; values near 0 suggest it is likely absent; intermediate values are ambiguous.
+The M-value columns give METASOFT's posterior probability, under its specified priors and model, that a nonzero effect is present in each ancestry-specific study. Values near 1 support effect presence, values near 0 support effect absence, and intermediate values are ambiguous.
 
 ```{r plot-mvalue-heatmap, fig.width=7, fig.height=6}
 mvalue_top <- head(
@@ -899,9 +873,11 @@ ggplot(mvalue_plot_df, aes(x = ancestry, y = variant_id, fill = mvalue)) +
 
 In this practical, we used one harmonized regional summary-statistics file to run three complementary analyses:
 
-- **Fixed-effect meta-analysis**: one shared effect size, inverse-variance weighted.
-- **RE2**: a heterogeneity-aware association test that can detect subset effects.
-- **M-values**: posterior probabilities that help localize a heterogeneous effect to one or more studies.
+- **Fixed-effect meta-analysis**: estimates one common effect across the included strata using inverse-variance weighting.
+- **RE2**: tests for association using both mean-effect and heterogeneity information and can gain power when effects differ across studies.
+- **M-values**: model-based posterior probabilities that help describe which studies are more compatible with effect presence.
+
+In this workshop, differences across ancestry strata are useful for learning about heterogeneity, but they should not automatically be interpreted as ancestry-caused biological differences. Sampling variation, linkage disequilibrium, allele frequency, imputation quality, and study-design differences can also contribute to cross-stratum differences.
 
 ```{bash check-usage}
 
