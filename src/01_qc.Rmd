@@ -32,6 +32,11 @@ In this session we will:
 
 **Note: These steps illustrate core GWAS QC concepts but are not an exhaustive production QC protocol.** Depending on the study and genotyping platform, additional checks may include sex-chromosome concordance, duplicate/sample identity checks, batch effects, allele/build harmonization, differential missingness, external allele-frequency comparisons, and post-imputation QC.
 
+**External resources**
+
+- PLINK 1.9 Documentation: <https://www.cog-genomics.org/plink/>
+- GrafAnc Software Documentation: <https://github.com/jimmy-penn/grafanc/blob/master/GrafAncDocumentation.md>
+
 ---
 
 # Setup
@@ -439,7 +444,7 @@ PennCATH study samples are shown in black. In these PC plots, the PennCATH sampl
 
 In Step 7, we used joint PCA with 1KG reference-labeled samples to place PennCATH genetic variation in a reference context. It requires careful allele harmonization and several manual processing steps.
 
-[GrafAnc](https://github.com/jimmy-penn/grafanc/blob/master/GrafAncDocumentation.md) is a purpose-built tool that estimates genetic ancestry from genotype data without requiring a study-by-study merge with an external reference panel. It uses 282,424 pre-selected biallelic ancestry SNPs to calculate reference-based genetic-distance scores and assigns continental- and subcontinental-level ancestry groups. These are algorithmic assignments relative to GrafAnc's reference populations, not direct measurements of race, ethnicity, or personal identity.
+[GrafAnc]is a purpose-built tool that estimates genetic ancestry from genotype data without requiring a study-by-study merge with an external reference panel. It uses 282,424 pre-selected biallelic ancestry SNPs to calculate reference-based genetic-distance scores and assigns continental- and subcontinental-level ancestry groups. These are algorithmic assignments relative to GrafAnc's reference populations, not direct measurements of race, ethnicity, or personal identity.
 
 We'll run GrafAnc on our QC'd PennCATH data and compare its assignments with the reference-based PCA pattern from Step 7.
 
