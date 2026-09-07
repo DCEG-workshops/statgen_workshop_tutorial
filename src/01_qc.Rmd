@@ -444,7 +444,7 @@ PennCATH study samples are shown in black. In these PC plots, the PennCATH sampl
 
 In Step 7, we used joint PCA with 1KG reference-labeled samples to place PennCATH genetic variation in a reference context. It requires careful allele harmonization and several manual processing steps.
 
-[GrafAnc]is a purpose-built tool that estimates genetic ancestry from genotype data without requiring a study-by-study merge with an external reference panel. It uses 282,424 pre-selected biallelic ancestry SNPs to calculate reference-based genetic-distance scores and assigns continental- and subcontinental-level ancestry groups. These are algorithmic assignments relative to GrafAnc's reference populations, not direct measurements of race, ethnicity, or personal identity.
+[GrafAnc] is a purpose-built tool that estimates genetic ancestry from genotype data without requiring a study-by-study merge with an external reference panel. It uses 282,424 pre-selected biallelic ancestry SNPs to calculate reference-based genetic-distance scores and assigns continental- and subcontinental-level ancestry groups. Again, these are algorithmic assignments relative to GrafAnc's reference populations, not direct measurements of race, ethnicity, or personal identity.
 
 We'll run GrafAnc on our QC'd PennCATH data and compare its assignments with the reference-based PCA pattern from Step 7.
 
