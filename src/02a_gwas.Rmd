@@ -1,5 +1,5 @@
 ---
-title: "Session 2: Basic GWAS with Regenie"
+title: "Session 2a: Basic GWAS with Regenie"
 output: html_document
 ---
 
