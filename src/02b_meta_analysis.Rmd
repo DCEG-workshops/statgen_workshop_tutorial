@@ -1,5 +1,5 @@
 ---
-title: "Session 3: Cross-Ancestry GWAS Meta-Analysis with METASOFT"
+title: "Session 2b: Cross-Ancestry GWAS Meta-Analysis with METASOFT"
 output: html_document
 ---
 
@@ -18,7 +18,7 @@ output: html_document
 
 # Workshop Overview
 
-Today we will meta-analyze AFR, ASN, and EUR ancestry-specific breast-cancer GWAS summary statistics from BCAC2017. In METASOFT terminology, each ancestry-specific GWAS stratum is treated as a separate “study” because it contributes one beta/SE pair per variant.
+We will meta-analyze AFR, ASN, and EUR ancestry-specific breast-cancer GWAS summary statistics from BCAC2017. In METASOFT terminology, each ancestry-specific GWAS stratum is treated as a separate “study” because it contributes one beta/SE pair per variant.
 
 The raw BCAC2017 files are millions of rows, so this practical starts from a prepared **TERT** window on chromosome 5. We will focus on:
 
