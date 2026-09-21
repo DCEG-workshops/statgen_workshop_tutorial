@@ -1,0 +1,845 @@
+---
+title: "Genetic Mosaicism Practical - Biowulf 2026"
+author: "Statistical Genetics Workshop 2026"
+output: html_document
+---
+
+## Genetic mosaicism practical
+
+This practical is designed for **RStudio Server running through Biowulf OnDemand**.
+Shared workshop reference files, test data, and Singularity container images are provided
+on the Biowulf shared filesystem. Each participant writes intermediate and final results
+to a personal working directory.
+
+**How to use this document:** Work through the sections in order. R code is in `{r}`
+chunks and Linux commands are in `{bash}` chunks. For a Bash chunk, click the green
+Run button for the chunk. The commands run on the Biowulf compute node allocated to
+RStudio Server.
+
+### 1. Set up
+
+#### Workshop resources and participant working area
+
+Shared workshop resources are located at:
+
+```text
+/data/DCEG_shared/statgen_workshop_2026/statgen_workshop_tutorial/DCEG_mosaicism_workshop
+```
+
+Participant-specific working files are stored under:
+
+```text
+/data/<Biowulf-username>/statgen_workshop_2026/session8/mosaicism
+```
+
+The shared directory is used for input resources; the participant directory is used for
+files generated during the practical.
+
+#### Define paths
+
+```{r}
+# Shared workshop resources
+workshop_dir <- "/data/DCEG_shared/statgen_workshop_2026/statgen_workshop_tutorial/DCEG_mosaicism_workshop"
+ref_dir <- file.path(workshop_dir, "ref_files")
+sig_dir <- file.path(workshop_dir, "sig_files")
+test_dir <- file.path(workshop_dir, "test_set")
+
+# Singularity images used in the 2026 workshop
+bcftools_sif <- file.path(sig_dir, "bcftools_1.20-20240927.sif")
+eagle_sif <- file.path(sig_dir, "eagle_1.16-20221221.sif")
+
+# Participant-specific working area
+user_name <- Sys.getenv("USER")
+if (!nzchar(user_name)) {
+  stop("Biowulf USER environment variable is not set.")
+}
+
+analysis_dir <- file.path(
+  "/data",
+  user_name,
+  "statgen_workshop_2026",
+  "session8",
+  "mosaicism"
+)
+
+# Reference files
+ref <- file.path(ref_dir, "human_g1k_v37.fasta")
+maps <- file.path(ref_dir, "genetic_map_hg19_withX.txt.gz")
+kgp_pfx <- file.path(ref_dir, "ALL.chr")
+kgp_sfx <- ".phase3_integrated.20130502.genotypes"
+cnp <- file.path(ref_dir, "cnp.grch37.bed")
+cyto <- file.path(ref_dir, "cytoBand.hg19.txt.gz")
+ref_phase <- file.path(ref_dir, "ALL.phase3_integrated.20130502.sites.bcf")
+
+# 2026 workshop test set
+genome_studio_file <- file.path(
+  test_dir,
+  "full_data_table_test_set.txt"
+)
+
+# Regions used by MOChA
+mhc_reg <- "6:27486711-33448264"
+kir_reg <- "19:54574747-55504099"
+rule <- "GRCh37"
+
+# Participant output directories
+temp_dir <- file.path(analysis_dir, "temp")
+to_bcf <- file.path(analysis_dir, "to_bcf")
+phasing <- file.path(analysis_dir, "phasing")
+phasing_by_chrs <- file.path(phasing, "by_chrs")
+mocha <- file.path(analysis_dir, "mocha")
+plots <- file.path(analysis_dir, "plots")
+logs <- file.path(analysis_dir, "logs")
+circos <- file.path(analysis_dir, "circos")
+baf_regress <- file.path(analysis_dir, "baf_regress")
+analysis_bin <- file.path(analysis_dir, "bin")
+
+# MOChA plotting script used in the 2026 workshop
+mocha_plot_script <- file.path(
+  workshop_dir,
+  "bin",
+  "mocha_plot.09.27.24.R"
+)
+
+# Use the original shared workshop Circos script.
+circos_script <- file.path(workshop_dir, "circos", "plot_mosaic_circos.R")
+if (file.access(circos_script, 4) != 0) {
+  stop("Shared Circos script is not readable: ", circos_script)
+}
+
+# Create participant output directories
+for (d in c(
+  analysis_dir,
+  analysis_bin,
+  temp_dir,
+  to_bcf,
+  phasing,
+  phasing_by_chrs,
+  mocha,
+  plots,
+  logs,
+  circos,
+  baf_regress
+)) {
+  dir.create(d, recursive = TRUE, showWarnings = FALSE)
+}
+
+# Make paths available to Bash chunks
+Sys.setenv(
+  WORKSHOP_DIR = workshop_dir,
+  REF_DIR = ref_dir,
+  SIG_DIR = sig_dir,
+  TEST_DIR = test_dir,
+  ANALYSIS_DIR = analysis_dir,
+  REF = ref,
+  GENOME_STUDIO_FILE = genome_studio_file,
+  MAPS = maps,
+  KGP_PFX = kgp_pfx,
+  KGP_SFX = kgp_sfx,
+  CNP = cnp,
+  CYTO = cyto,
+  REF_PHASE = ref_phase,
+  MHC_REG = mhc_reg,
+  KIR_REG = kir_reg,
+  RULE = rule,
+  TEMP_DIR = temp_dir,
+  TO_BCF = to_bcf,
+  PHASING = phasing,
+  PHASING_BY_CHRS = phasing_by_chrs,
+  MOCHA = mocha,
+  PLOTS = plots,
+  LOGS = logs,
+  CIRCOS = circos,
+  BAF_REGRESS = baf_regress,
+  ANALYSIS_BIN = analysis_bin,
+  BCFTOOLS_SIF = bcftools_sif,
+  EAGLE_SIF = eagle_sif,
+  MOCHA_PLOT_SCRIPT = mocha_plot_script,
+  CIRCOS_SCRIPT = circos_script
+)
+```
+
+#### Verify the setup
+
+This check confirms that the shared resources and required software files are available
+and that the participant working directory is writable.
+
+```{r}
+required_files <- c(
+  reference = ref,
+  genetic_map = maps,
+  cnp = cnp,
+  cytoband = cyto,
+  allele_frequency_reference = ref_phase,
+  genome_studio_test_set = genome_studio_file,
+  bcftools_sif = bcftools_sif,
+  eagle_sif = eagle_sif,
+  mocha_plot_script = mocha_plot_script
+)
+
+check <- data.frame(
+  file = unname(required_files),
+  exists = file.exists(required_files),
+  row.names = names(required_files),
+  check.names = FALSE
+)
+
+check
+
+if (any(!check$exists)) {
+  stop(
+    "One or more required workshop files are missing:\n",
+    paste(rownames(check)[!check$exists], collapse = ", ")
+  )
+}
+
+if (file.access(analysis_dir, 2) != 0) {
+  stop("Participant working directory is not writable: ", analysis_dir)
+}
+
+cat("Participant working directory:\n", analysis_dir, "\n", sep = "")
+```
+
+### 2. Containerized software on Biowulf
+
+Biowulf provides Singularity for running containerized software. Each Bash chunk that
+uses Singularity loads the module explicitly.
+
+```{bash}
+set -euo pipefail
+module load singularity
+singularity --version
+```
+
+#### Test the bcftools container
+
+The 2026 practical uses **bcftools 1.20**, which includes the `BAFregress` plugin used
+for the contamination check below.
+
+```{bash}
+set -euo pipefail
+module load singularity
+
+singularity exec \
+  --bind /data/$USER:/data/$USER \
+  --bind /data/DCEG_shared:/data/DCEG_shared \
+  "$BCFTOOLS_SIF" \
+  bcftools --version
+```
+
+#### Test the EAGLE2 container
+
+```{bash}
+set -euo pipefail
+module load singularity
+
+singularity exec \
+  --bind /data/$USER:/data/$USER \
+  --bind /data/DCEG_shared:/data/DCEG_shared \
+  "$EAGLE_SIF" \
+  eagle --help >/dev/null
+
+echo "EAGLE2 container is accessible."
+```
+
+### 3. Converting the GenomeStudio CNV table to BCF
+
+The GenomeStudio table is converted to BCF with `bcftools +gtc2vcf`, then sorted and
+normalized against the reference genome. The resulting BCF is the input for phasing
+and can also be used for the contamination check.
+
+#### Run `bcftools +gtc2vcf`
+
+The 2026 test input is:
+
+```text
+/data/DCEG_shared/statgen_workshop_2026/statgen_workshop_tutorial/DCEG_mosaicism_workshop/test_set/full_data_table_test_set.txt
+```
+
+```{bash}
+set -euo pipefail
+module load singularity
+
+singularity exec \
+  --bind /data/$USER:/data/$USER \
+  --bind /data/DCEG_shared:/data/DCEG_shared \
+  "$BCFTOOLS_SIF" \
+  bash -c '
+    set -euo pipefail
+
+    bcftools +gtc2vcf --no-version -Ou \
+      --genome-studio "$GENOME_STUDIO_FILE" \
+      -f "$REF" | \
+    bcftools sort -Ou -T "$TEMP_DIR" | \
+    bcftools norm --no-version -Ob \
+      -o "$TO_BCF/samples.bcf" \
+      -c x -f "$REF"
+
+    bcftools index -f \
+      "$TO_BCF/samples.bcf" \
+      -o "$TO_BCF/samples.bcf.csi"
+  '
+```
+
+
+```{bash}
+set -euo pipefail
+ls -lh "$TO_BCF"
+```
+
+Expected files:
+
+```text
+samples.bcf
+samples.bcf.csi
+```
+
+### 4. Contamination check using BAFRegress
+
+[BAFRegress](https://genome.sph.umich.edu/wiki/BAFRegress) uses B-allele frequency
+and population allele-frequency information to estimate sample contamination. Here it
+is applied to the BCF generated in the previous step.
+
+#### Verify the BAFRegress plugin
+
+```{bash}
+set -euo pipefail
+module load singularity
+
+singularity exec \
+  --bind /data/$USER:/data/$USER \
+  --bind /data/DCEG_shared:/data/DCEG_shared \
+  "$BCFTOOLS_SIF" \
+  bcftools plugin -l | grep -i BAF
+```
+
+The output should include `BAFregress`.
+
+#### Run BAFRegress
+
+```{bash}
+set -euo pipefail
+echo "Running BAFRegress..."
+echo "Input BCF: $TO_BCF/samples.bcf"
+echo "AF reference: $REF_PHASE"
+echo "Output: $BAF_REGRESS/baf_regress.txt"
+
+module load singularity
+
+singularity exec \
+  --bind /data/$USER:/data/$USER \
+  --bind /data/DCEG_shared:/data/DCEG_shared \
+  "$BCFTOOLS_SIF" \
+  bcftools +BAFregress "$TO_BCF/samples.bcf" \
+    --af "$REF_PHASE" \
+    -e "$BAF_REGRESS/baf_regress.txt"
+```
+
+#### Check the BAFRegress output
+
+```{bash}
+set -euo pipefail
+ls -lh "$BAF_REGRESS"
+cat "$BAF_REGRESS/baf_regress.txt"
+```
+
+### 5. Phasing using EAGLE2
+
+EAGLE2 phases the genotype data chromosome by chromosome. During the practical,
+chromosomes 1-22 and X are submitted as separate Slurm jobs so they can run in parallel.
+
+#### Prepare the EAGLE2 phasing script
+
+The phasing script is created in the participant's working directory and is used by the
+23 Slurm jobs below.
+
+```{bash}
+set -euo pipefail
+cat > "$ANALYSIS_BIN/phasing.sh" <<'PHASING_SCRIPT'
+#!/bin/bash
+set -euo pipefail
+
+chr="$1"
+maps="$2"
+kgp_pfx="$3"
+kgp_sfx="$4"
+analysis_dir="$5"
+eagle2_sif="$6"
+bcftools_sif="$7"
+
+to_bcf="$analysis_dir/to_bcf"
+phasing_by_chrs="$analysis_dir/phasing/by_chrs"
+
+ref_bcf="${kgp_pfx}${chr}${kgp_sfx}.bcf"
+out_prefix="${phasing_by_chrs}/samples.chr${chr}"
+
+if [ ! -f "$to_bcf/samples.bcf" ]; then
+  echo "ERROR: target BCF not found: $to_bcf/samples.bcf" >&2
+  exit 1
+fi
+
+if [ ! -f "$ref_bcf" ]; then
+  echo "ERROR: reference BCF not found: $ref_bcf" >&2
+  exit 1
+fi
+
+module load singularity
+mkdir -p "$phasing_by_chrs"
+
+echo "========================================"
+echo "EAGLE2 phasing chromosome $chr"
+echo "Reference: $ref_bcf"
+echo "Target:    $to_bcf/samples.bcf"
+echo "Output:    ${out_prefix}.bcf"
+echo "========================================"
+
+singularity exec \
+  --bind /data/$USER:/data/$USER \
+  --bind /data/DCEG_shared:/data/DCEG_shared \
+  "$eagle2_sif" \
+  eagle \
+    --geneticMapFile "$maps" \
+    --outPrefix "$out_prefix" \
+    --vcfRef "$ref_bcf" \
+    --vcfTarget "$to_bcf/samples.bcf" \
+    --vcfOutFormat b \
+    --noImpMissing \
+    --outputUnphased \
+    --chrom "$chr" \
+    --pbwtIters 3 \
+    --numThreads "${SLURM_CPUS_PER_TASK:-2}"
+
+# Index the phased BCF with the workshop bcftools 1.20 image.
+singularity exec \
+  --bind /data/$USER:/data/$USER \
+  --bind /data/DCEG_shared:/data/DCEG_shared \
+  "$bcftools_sif" \
+  bcftools index -f "$out_prefix.bcf"
+
+echo "Finished chromosome $chr"
+PHASING_SCRIPT
+
+chmod +x "$ANALYSIS_BIN/phasing.sh"
+echo "Created: $ANALYSIS_BIN/phasing.sh"
+```
+
+#### Verify the reference BCFs for chromosomes 1-22 and X
+
+```{bash}
+set -euo pipefail
+missing=0
+for chr in $(seq 1 22) X; do
+  ref_bcf="${KGP_PFX}${chr}${KGP_SFX}.bcf"
+  if [ -f "$ref_bcf" ]; then
+    echo "OK: chr${chr}"
+  else
+    echo "MISSING: chr${chr} -> $ref_bcf"
+    missing=1
+  fi
+done
+
+if [ "$missing" -ne 0 ]; then
+  echo "One or more chromosome reference BCFs are missing. No EAGLE2 jobs were submitted."
+  exit 1
+fi
+```
+
+#### Submit EAGLE2 for chromosomes 1-22 and X
+
+```{bash}
+set -euo pipefail
+test -f "$EAGLE_SIF" || { echo "ERROR: EAGLE2 SIF not found: $EAGLE_SIF"; exit 1; }
+test -f "$BCFTOOLS_SIF" || { echo "ERROR: bcftools SIF not found: $BCFTOOLS_SIF"; exit 1; }
+test -f "$TO_BCF/samples.bcf" || { echo "ERROR: target BCF not found: $TO_BCF/samples.bcf"; exit 1; }
+
+: > "$LOGS/phasing_jobs.tsv"
+for chr in $(seq 1 22) X; do
+  job_id=$(sbatch --parsable --cpus-per-task=2 --mem=8g --time=01:00:00 \
+    --job-name="session8_eagle_chr${chr}" \
+    -o "$LOGS/eagle2_chr${chr}.out" \
+    -e "$LOGS/eagle2_chr${chr}.err" \
+    "$ANALYSIS_BIN/phasing.sh" \
+    "$chr" \
+    "$MAPS" \
+    "$KGP_PFX" \
+    "$KGP_SFX" \
+    "$ANALYSIS_DIR" \
+    "$EAGLE_SIF" \
+    "$BCFTOOLS_SIF")
+  job_id="${job_id%%;*}"
+  printf "%s\t%s\n" "$chr" "$job_id" >> "$LOGS/phasing_jobs.tsv"
+  echo "Submitted chromosome $chr as job $job_id"
+done
+```
+
+This submits **23 Slurm jobs**: chromosomes 1 through 22 and X.
+
+#### Monitor the EAGLE2 jobs
+
+```{bash}
+set -euo pipefail
+job_ids=$(cut -f2 "$LOGS/phasing_jobs.tsv" | paste -sd, -)
+while [ -n "$(squeue -h -j "$job_ids" -o '%i' 2>/dev/null)" ]; do
+  squeue -h -j "$job_ids" -o '%i %T %M %R'
+  sleep 15
+done
+# Allow a short interval for completed-job accounting to become available.
+for attempt in $(seq 1 12); do
+  sacct -X -n -P -j "$job_ids" --format=JobIDRaw,State,ExitCode > "$LOGS/phasing_accounting.tsv"
+  if awk -F'|' 'NF >= 3 {n++; if ($2 != "COMPLETED" || $3 != "0:0") bad++} END {exit !(n == 23 && bad == 0)}' "$LOGS/phasing_accounting.tsv"; then
+    break
+  fi
+  sleep 5
+done
+cat "$LOGS/phasing_accounting.tsv"
+awk -F'|' 'NF >= 3 {n++; if ($2 != "COMPLETED" || $3 != "0:0") bad++} END {exit !(n == 23 && bad == 0)}' "$LOGS/phasing_accounting.tsv"
+```
+
+This chunk waits for all 23 submitted jobs and requires successful Slurm exit codes before continuing.
+
+#### Verify all phased BCF files and indexes
+
+```{bash}
+set -euo pipefail
+missing=0
+for chr in $(seq 1 22) X; do
+  f="$PHASING_BY_CHRS/samples.chr${chr}.bcf"
+  if [ -f "$f" ] && [ -f "${f}.csi" ]; then
+    echo "OK: chr${chr}"
+  else
+    echo "MISSING: chr${chr} -> $f or ${f}.csi"
+    missing=1
+  fi
+done
+
+if [ "$missing" -ne 0 ]; then
+  echo "One or more phased BCF files are missing. Check $LOGS/eagle2_chr*.err and .out before continuing."
+  exit 1
+fi
+```
+
+#### Check results under `phasing/by_chrs/`
+
+```{bash}
+set -euo pipefail
+ls -lh "$PHASING_BY_CHRS"
+```
+
+Expected files include `samples.chr1.bcf` through `samples.chr22.bcf`, the chrX BCF,
+and the corresponding `.csi` index files.
+
+### 6. Concatenating phased output into a single BCF file
+
+The chromosome-specific phased BCFs are concatenated into one BCF for downstream MOChA
+analysis.
+
+```{bash}
+set -euo pipefail
+module load singularity
+
+singularity exec \
+  --bind /data/$USER:/data/$USER \
+  --bind /data/DCEG_shared:/data/DCEG_shared \
+  "$BCFTOOLS_SIF" \
+  bash -c '
+    set -euo pipefail
+
+    bcftools concat --no-version -Ob \
+      "$PHASING_BY_CHRS"/samples.chr{1..22}.bcf \
+      "$PHASING_BY_CHRS"/samples.chrX.bcf \
+      -o "$PHASING/samples.pgt.bcf"
+
+    bcftools index --force \
+      "$PHASING/samples.pgt.bcf" \
+      -o "$PHASING/samples.pgt.bcf.csi"
+  '
+```
+
+#### Check results under `phasing/`
+
+```{bash}
+set -euo pipefail
+ls -lh "$PHASING"
+```
+
+Expected files include:
+
+```text
+samples.pgt.bcf
+samples.pgt.bcf.csi
+```
+
+### 7. mCA detection using MOChA
+
+MOChA analyzes the phased BCF together with the reference resources to identify mosaic
+chromosomal alterations (mCAs), including mosaic gains, deletions, and copy-neutral loss
+of heterozygosity (CN-LOH).
+
+#### Run `bcftools +mocha`
+
+```{bash}
+set -euo pipefail
+module load singularity
+
+singularity exec \
+  --bind /data/$USER:/data/$USER \
+  --bind /data/DCEG_shared:/data/DCEG_shared \
+  "$BCFTOOLS_SIF" \
+  bash -c '
+    set -euo pipefail
+
+    bcftools +mocha \
+      --genome "$RULE" \
+      --no-version \
+      --output "$MOCHA/samples.as.bcf" \
+      --output-type b \
+      --calls "$MOCHA/samples.calls.tsv" \
+      --stats "$MOCHA/samples.stats.tsv" \
+      --ucsc-bed "$MOCHA/samples.ucsc.bed" \
+      --cnp "$CNP" \
+      --mhc "$MHC_REG" \
+      --kir "$KIR_REG" \
+      "$PHASING/samples.pgt.bcf"
+
+    bcftools index --force \
+      "$MOCHA/samples.as.bcf" \
+      --output "$MOCHA/samples.as.bcf.csi"
+  '
+```
+
+#### Check MOChA results
+
+```{bash}
+set -euo pipefail
+ls -lh "$MOCHA"
+```
+
+Expected files include `samples.calls.tsv`, `samples.stats.tsv`, `samples.ucsc.bed`,
+`samples.as.bcf`, and its `.csi` index.
+
+#### Display MOChA calls
+
+```{bash}
+set -euo pipefail
+cat "$MOCHA/samples.calls.tsv"
+```
+
+```{r}
+mocha_calls <- read.delim(
+  file.path(mocha, "samples.calls.tsv"),
+  check.names = FALSE
+)
+if (interactive()) View(mocha_calls) else print(mocha_calls)
+```
+
+### 8. Plotting mCAs
+
+The workshop uses `mocha_plot.09.27.24.R` to visualize selected MOChA calls.
+
+#### Verify required R packages
+
+The workshop R environment should already contain the packages used by the plotting
+script.
+
+```{r}
+needed <- c("optparse", "reshape2", "data.table", "ggplot2", "circlize")
+missing <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
+
+if (length(missing) > 0) {
+  stop(
+    "The following R packages are missing: ",
+    paste(missing, collapse = ", "),
+    ". Please install them before continuing."
+  )
+}
+```
+
+#### Prepare a bcftools wrapper and generate the five mCA plots
+
+The MOChA plotting script calls `bcftools` from the system PATH. The wrapper below makes
+the workshop's bcftools 1.20 container available as that `bcftools` command.
+
+```{bash}
+set -euo pipefail
+module load singularity
+
+BCFTOOLS_WRAPPER="$ANALYSIS_BIN/bcftools"
+SINGULARITY_BIN="$(command -v singularity)"
+
+cat > "$BCFTOOLS_WRAPPER" <<BCFTOOLS_WRAPPER_SCRIPT
+#!/bin/bash
+set -euo pipefail
+
+exec "$SINGULARITY_BIN" exec \\
+  --bind /data/$USER:/data/$USER \\
+  --bind /data/DCEG_shared:/data/DCEG_shared \\
+  "$BCFTOOLS_SIF" \\
+  bcftools "\$@"
+BCFTOOLS_WRAPPER_SCRIPT
+
+chmod +x "$BCFTOOLS_WRAPPER"
+export PATH="$ANALYSIS_BIN:$PATH"
+
+command -v bcftools
+bcftools --version
+
+echo
+echo "Generating mCA plots..."
+
+Rscript --vanilla "$MOCHA_PLOT_SCRIPT" \
+  --mocha \
+  --stats "$MOCHA/samples.stats.tsv" \
+  --vcf "$MOCHA/samples.as.bcf" \
+  --png "$PLOTS/S5.png" \
+  --samples S5 \
+  --regions 11:0-47350287 \
+  --cytoband "$CYTO"
+
+Rscript --vanilla "$MOCHA_PLOT_SCRIPT" \
+  --mocha \
+  --stats "$MOCHA/samples.stats.tsv" \
+  --vcf "$MOCHA/samples.as.bcf" \
+  --png "$PLOTS/S8.png" \
+  --samples S8 \
+  --regions 9:0-33487198 \
+  --cytoband "$CYTO"
+
+Rscript --vanilla "$MOCHA_PLOT_SCRIPT" \
+  --mocha \
+  --stats "$MOCHA/samples.stats.tsv" \
+  --vcf "$MOCHA/samples.as.bcf" \
+  --png "$PLOTS/S9.png" \
+  --samples S9 \
+  --regions 13:32064883-54917256 \
+  --cytoband "$CYTO"
+
+Rscript --vanilla "$MOCHA_PLOT_SCRIPT" \
+  --mocha \
+  --stats "$MOCHA/samples.stats.tsv" \
+  --vcf "$MOCHA/samples.as.bcf" \
+  --png "$PLOTS/S10.png" \
+  --samples S10 \
+  --regions 20:31144462-63025520 \
+  --cytoband "$CYTO"
+
+Rscript --vanilla "$MOCHA_PLOT_SCRIPT" \
+  --mocha \
+  --stats "$MOCHA/samples.stats.tsv" \
+  --vcf "$MOCHA/samples.as.bcf" \
+  --png "$PLOTS/S6.png" \
+  --samples S6 \
+  --regions 10:84111105-85108139 \
+  --cytoband "$CYTO"
+
+echo
+echo "Generated plots:"
+ls -lh "$PLOTS"/S5.png \
+       "$PLOTS"/S6.png \
+       "$PLOTS"/S8.png \
+       "$PLOTS"/S9.png \
+       "$PLOTS"/S10.png
+```
+
+#### Display mCA plots
+
+##### Constitutional duplication on chr10
+
+- Abnormal cell fraction = 73%
+- Characterized by e^LRR > 1; the AB BAF band splits into two bands.
+
+```{r, out.width="600px", echo=FALSE}
+knitr::include_graphics(file.path(plots, "S6.png"))
+```
+
+##### Mosaic deletion on chr13
+
+- Abnormal cell fraction = 20.3%
+- Characterized by e^LRR < 1; the AB BAF band splits into two bands.
+
+```{r, out.width="600px", echo=FALSE}
+knitr::include_graphics(file.path(plots, "S9.png"))
+```
+
+##### Three mCAs on chr9p
+
+The three calls overlap in genomic space but have different inferred cell fractions.
+They illustrate how multiple mCAs can contribute to a complex BAF pattern in the same
+chromosomal region.
+
+- Blue: CN-LOH in 40.87% of cells; e^LRR is approximately 1 and the AB BAF band splits into two.
+- Green: CN-LOH in 15.21% of cells.
+- Orange: deletion in 13.82% of cells; e^LRR < 1 and the AB BAF band splits into two.
+
+```{r, out.width="600px", echo=FALSE}
+knitr::include_graphics(file.path(plots, "S8.png"))
+```
+
+### 9. Circos plot illustrating autosomal mCAs
+
+For the 2026 workshop, we use the [`mosaic-event-circos`](https://github.com/NCI-CGR/mosaic-event-circos/)
+R script to visualize autosomal mosaic events.
+
+The plotting script and example data are read directly from the shared workshop
+`circos/` directory.
+
+The example files are stored in the shared workshop `circos/` directory. The generated
+images and summary files are written to the participant-specific `$CIRCOS` directory.
+
+#### Run Circos: three event types
+
+```{bash}
+set -euo pipefail
+test -r "$CIRCOS_SCRIPT" || { echo "ERROR: Shared Circos script is not readable"; exit 1; }
+test -f "$WORKSHOP_DIR/circos/example_data/mosaic_events_autosomal.synthetic.3types.txt" || { echo "ERROR: 3-type Circos input not found"; exit 1; }
+
+echo "Running Circos (three event types)..."
+Rscript "$CIRCOS_SCRIPT" \
+  --input="$WORKSHOP_DIR/circos/example_data/mosaic_events_autosomal.synthetic.3types.txt" \
+  --output-prefix="$CIRCOS/mosaic_events_autosomal.circos" \
+  --genome=hg38
+```
+
+#### Run Circos: four event types
+
+```{bash}
+set -euo pipefail
+test -f "$WORKSHOP_DIR/circos/example_data/mosaic_events_autosomal.synthetic.4types.txt" || { echo "ERROR: 4-type Circos input not found"; exit 1; }
+
+Rscript "$CIRCOS_SCRIPT" \
+  --input="$WORKSHOP_DIR/circos/example_data/mosaic_events_autosomal.synthetic.4types.txt" \
+  --output-prefix="$CIRCOS/mosaic_events_autosomal.circos2" \
+  --genome=hg38 \
+  --types=Gain,CN-LOH,Loss,Undetermined
+```
+
+#### Check Circos output
+
+```{bash}
+set -euo pipefail
+ls -lh "$CIRCOS"
+```
+
+Expected image files include:
+
+```text
+mosaic_events_autosomal.circos.png
+mosaic_events_autosomal.circos.pdf
+mosaic_events_autosomal.circos2.png
+mosaic_events_autosomal.circos2.pdf
+```
+
+Additional TSV summary files are also produced by the script.
+
+#### Display the Circos plots
+
+- Green: mosaic gain
+- Blue: mosaic CN-LOH
+- Red: mosaic loss
+
+```{r, out.width="600px", echo=FALSE}
+knitr::include_graphics(file.path(circos, "mosaic_events_autosomal.circos.png"))
+```
+
+```{r, out.width="600px", echo=FALSE}
+knitr::include_graphics(file.path(circos, "mosaic_events_autosomal.circos2.png"))
+```
