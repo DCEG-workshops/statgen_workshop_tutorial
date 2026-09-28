@@ -1,0 +1,276 @@
+---
+title: "Gene--Environment Interaction Lab"
+by: "Prepared by Jayati Sharma, PhD, ScM for the DCEG StatGen Course 2026"
+date: "`r Sys.Date()`"
+output: html_document
+student: "Your Name"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## Instructions
+
+You have two simulated case--control datasets. In each, ever- vs never-smoking
+and a single SNP may jointly affect disease risk. This lab tests for a
+**gene--environment (GxE) interaction on two scales** -- the multiplicative
+(odds-ratio) scale and the additive (risk-difference) scale -- and asks whether
+the answer to *"is there an interaction?"* depends on the scale you choose.
+
+**You do not need to write any code.** Run each block in order (or knit the whole
+document) and answer the interpretation questions in the text where prompted.
+
+The two files should sit in the same folder as this `.Rmd` (or use `setwd()`).
+Columns in both: `id`, `smoking` (never/ever), `snp_dosage` (0/1/2 minor
+alleles), `snp_carrier` (0/1), `disease` (1 = case, 0 = control).
+
+## Read and prepare the data
+
+```{r check and set directory, include=FALSE}
+getwd()  # should look like /vf/users/sharmajr (replace with your username)
+
+username <- Sys.getenv("USER")
+
+# Create Stats_Gen/workshop3 (recursive = TRUE makes Stats_Gen too if needed)
+workshop_dir <- file.path("/vf/users", username, "Stats_Gen", "workshop3")
+dir.create(workshop_dir, recursive = TRUE, showWarnings = FALSE)
+
+setwd(workshop_dir)
+getwd()  # confirm you're now in .../Stats_Gen/workshop3
+
+```
+
+
+```{r read-data}
+d1 <- read.csv("/data/DCEG_shared/statgen_workshop_2026/data/workshop3/gxe_dataset1.csv")
+d2 <- read.csv("/data/DCEG_shared/statgen_workshop_2026/data/workshop3/gxe_dataset2.csv")
+
+# Make 'never' the reference level (read.csv would otherwise order alphabetically)
+d1$smoking <- factor(d1$smoking, levels = c("never", "ever"))
+d2$smoking <- factor(d2$smoking, levels = c("never", "ever"))
+
+str(d1)
+c(prevalence_d1 = mean(d1$disease), prevalence_d2 = mean(d2$disease))
+```
+---
+
+# PART 1 -- dataset 1 (`gxe_dataset1.csv`)
+
+Before jumping into analysis, let's explore the distributions of the variables in the dataset.
+```{r p1-explore}
+cat("N =", nrow(d1), "\n")
+for (v in c("smoking", "snp_dosage", "snp_carrier", "disease")) {
+  cat("\n", v, ":\n", sep = "")
+  tb <- table(d1[[v]])
+  print(rbind(n = tb, prop = round(prop.table(tb), 3)))
+}
+```
+
+
+## 1a. Multiplicative (odds-ratio) scale
+
+Logistic regression with an **additive SNP dosage by smoking** interaction. The
+`snp_dosage:smokingever` coefficient, exponentiated, is the per-allele
+interaction odds ratio.
+
+```{r p1-multiplicative}
+m1_mult <- glm(disease ~ snp_dosage * smoking, data = d1, family = binomial)
+summary(m1_mult)
+
+cf <- coef(summary(m1_mult))
+i  <- grep(":", rownames(cf))                    # the interaction row
+OR <- exp(cf[i, "Estimate"])
+CI <- exp(cf[i, "Estimate"] + c(-1, 1) * 1.96 * cf[i, "Std. Error"])
+cat(sprintf("Interaction OR (per allele) = %.2f  (95%% CI %.2f-%.2f),  p = %.4g\n",
+            OR, CI[1], CI[2], cf[i, 4]))
+```
+
+## 1b. Additive (risk-difference) scale
+
+The same interaction, tested as a departure from additive **risk**, using a
+linear-probability model (`lm` on the 0/1 outcome). Here the interaction
+coefficient is a *risk difference*, not an odds ratio.
+
+```{r p1-additive}
+m1_add <- lm(disease ~ snp_dosage * smoking, data = d1)
+summary(m1_add)
+
+ca <- coef(summary(m1_add))
+ia <- grep(":", rownames(ca))
+cat(sprintf("Interaction risk difference (per allele) = %+.3f,  p = %.4g\n",
+            ca[ia, "Estimate"], ca[ia, 4]))
+```
+
+## 1c. 2x2 risk table and RERI
+
+Observed risk in the four smoking x carrier cells, then RERI (relative excess
+risk due to interaction), an additive-scale index computed from a carrier-coded
+logistic model.
+
+```{r p1-table-reri}
+tab1 <- aggregate(disease ~ smoking + snp_carrier, data = d1,
+                  FUN = function(x) round(mean(x), 3))
+tab1$n <- aggregate(disease ~ smoking + snp_carrier, data = d1, FUN = length)$disease
+tab1
+
+m1_ri <- glm(disease ~ snp_carrier * smoking, data = d1, family = binomial)
+b <- coef(m1_ri)
+RERI1 <- exp(b["snp_carrier"] + b["smokingever"] + b["snp_carrier:smokingever"]) -
+         exp(b["snp_carrier"]) - exp(b["smokingever"]) + 1
+cat(sprintf("RERI = %.2f   (0 = additivity holds; > 0 = super-additive risk)\n", RERI1))
+```
+
+ ## 1d. Questions -- Part 1 
+ *(type your answers below)*
+
+1. Report the interaction OR (with 95% CI) and the additive risk-difference
+   interaction. Do the two scales **agree** that an interaction exists?
+2. In the 2x2 table, how much higher is risk in ever-smoking carriers than
+   simple additivity of the two separate effects would predict? (Compare the
+   observed ever/carrier risk with never/non-carrier + the two single-exposure
+   increments.)
+
+> *Your answers:*
+
+---
+
+# PART 2 -- dataset 2 (`gxe_dataset2.csv`)
+
+The same three analyses, now on `d2`.
+Before jumping into analysis, let's explore the distributions of the variables in the dataset.
+```{r p2-explore}
+cat("N =", nrow(d2), "\n")
+for (v in c("smoking", "snp_dosage", "snp_carrier", "disease")) {
+  cat("\n", v, ":\n", sep = "")
+  tb <- table(d2[[v]])
+  print(rbind(n = tb, prop = round(prop.table(tb), 3)))
+}
+```
+
+
+## 2a. Multiplicative (odds-ratio) scale
+
+```{r p2-multiplicative}
+m2_mult <- glm(disease ~ snp_dosage * smoking, data = d2, family = binomial)
+summary(m2_mult)
+
+cf2 <- coef(summary(m2_mult))
+i2  <- grep(":", rownames(cf2))
+OR2 <- exp(cf2[i2, "Estimate"])
+CI2 <- exp(cf2[i2, "Estimate"] + c(-1, 1) * 1.96 * cf2[i2, "Std. Error"])
+cat(sprintf("Interaction OR (per allele) = %.2f  (95%% CI %.2f-%.2f),  p = %.4g\n",
+            OR2, CI2[1], CI2[2], cf2[i2, 4]))
+```
+
+## 2b. Additive (risk-difference) scale
+
+```{r p2-additive}
+m2_add <- lm(disease ~ snp_dosage * smoking, data = d2)
+summary(m2_add)
+
+ca2 <- coef(summary(m2_add))
+ia2 <- grep(":", rownames(ca2))
+cat(sprintf("Interaction risk difference (per allele) = %+.3f,  p = %.4g\n",
+            ca2[ia2, "Estimate"], ca2[ia2, 4]))
+```
+
+## 2c. 2x2 risk table and RERI
+
+```{r p2-table-reri}
+tab2 <- aggregate(disease ~ smoking + snp_carrier, data = d2,
+                  FUN = function(x) round(mean(x), 3))
+tab2$n <- aggregate(disease ~ smoking + snp_carrier, data = d2, FUN = length)$disease
+tab2
+
+m2_ri <- glm(disease ~ snp_carrier * smoking, data = d2, family = binomial)
+b2 <- coef(m2_ri)
+RERI2 <- exp(b2["snp_carrier"] + b2["smokingever"] + b2["snp_carrier:smokingever"]) -
+         exp(b2["snp_carrier"]) - exp(b2["smokingever"]) + 1
+cat(sprintf("RERI = %.2f   (0 = additivity holds; > 0 = super-additive risk)\n", RERI2))
+```
+
+```{r RERI confidence interval}
+# RERI with a delta-method (Wald) 95% CI, using the carrier-coded logistic model.
+# m1_ri <- glm(disease ~ snp_carrier * smoking, data = d1, family = binomial)
+
+reri_ci <- function(model, level = 0.95) {
+  b <- coef(model)          # b1 = carrier, b2 = smoking, b3 = interaction
+  V <- vcov(model)
+  b1 <- b[2]; b2 <- b[3]; b3 <- b[4]
+
+  RERI <- exp(b1 + b2 + b3) - exp(b1) - exp(b2) + 1
+
+  # gradient of RERI w.r.t. (b1, b2, b3)
+  g <- c(exp(b1 + b2 + b3) - exp(b1),   # d/db1
+         exp(b1 + b2 + b3) - exp(b2),   # d/db2
+         exp(b1 + b2 + b3))             # d/db3
+  Vsub <- V[2:4, 2:4]
+  se   <- sqrt(as.numeric(t(g) %*% Vsub %*% g))
+
+  z  <- qnorm(1 - (1 - level) / 2)
+  c(RERI = unname(RERI), lower = unname(RERI - z * se), upper = unname(RERI + z * se))
+}
+
+round(reri_ci(m1_ri), 2)
+round(reri_ci(m2_ri), 2)
+```
+
+
+## 2d. Questions -- Part 2 
+*(type your answers below)*
+
+3. What is the interaction OR and its p-value? From the **logistic model alone**,
+   would you conclude there is an interaction?
+4. What is RERI here? Explain how RERI can be well above 0 when the interaction
+   OR is approximately 1.
+5. A public-health team must decide whether to prioritise smoking-cessation
+   outreach among SNP carriers. **Which scale** answers that question, and what
+   would you recommend based on this dataset?
+
+> *Your answers:*
+
+---
+
+# Synthesis
+
+6. Answer *"Is there a gene--environment interaction?"* separately for dataset 1
+   and dataset 2. In one sentence, explain why a defensible answer must **name a
+   scale**.
+7. Which scale would you report, and why? (Consider what question each scale
+   answers, and which is more relevant for etiology vs. public-health impact.)
+
+> *Your answers:*
+
+---
+
+## Optional: visualise the interaction on both scales
+
+Two scales, two pictures. Non-parallel lines signal an interaction *on the scale
+being plotted*. On the **risk** scale (top row) both datasets show non-parallel
+lines -- an additive interaction in both. On the **log-odds** scale (bottom row,
+which is what logistic regression tests) the lines are non-parallel for dataset 1
+but essentially parallel for dataset 2 -- so dataset 2 has no multiplicative
+interaction even though its risk-scale lines clearly diverge.
+
+```{r plots, fig.width=9, fig.height=7}
+plot_gxe <- function(d, main, scale = c("risk", "logodds")) {
+  scale <- match.arg(scale)
+  r    <- tapply(d$disease, list(d$snp_carrier, d$smoking), mean)  # rows: 0/1 carrier
+  y    <- if (scale == "risk") r else log(r / (1 - r))
+  ylab <- if (scale == "risk") "disease risk" else "log-odds of disease"
+  matplot(t(y), type = "b", pch = 19, lty = 1, xaxt = "n",
+          xlab = "smoking", ylab = ylab, main = main,
+          col = c("steelblue", "firebrick"))
+  axis(1, at = 1:2, labels = c("never", "ever"))
+  legend("topleft", c("non-carrier", "carrier"), pch = 19,
+         col = c("steelblue", "firebrick"), bty = "n")
+}
+par(mfrow = c(2, 2))
+plot_gxe(d1, "Dataset 1 - RISK scale",     "risk")
+plot_gxe(d2, "Dataset 2 - RISK scale",     "risk")
+plot_gxe(d1, "Dataset 1 - LOG-ODDS scale", "logodds")
+plot_gxe(d2, "Dataset 2 - LOG-ODDS scale", "logodds")
+```
+
+*This lab was prepared by Jayati Sharma. For questions, please email jayati.sharma@nih.gov.*
