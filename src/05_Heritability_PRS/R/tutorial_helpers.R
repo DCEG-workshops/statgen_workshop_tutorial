@@ -1,4 +1,4 @@
-# Supporting functions for 04_Heritability_PRS.Rmd.
+# Supporting functions for 05_Heritability_PRS.Rmd.
 
 required_inputs <- function(data_dir, phenotype_path) {
   bed_files <- function(prefix) paste0(file.path(data_dir, prefix), c(".bed", ".bim", ".fam"))

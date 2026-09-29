@@ -77,7 +77,7 @@ LD Score regression, genetic correlation, stratified LD Score regression, and
 clumping and thresholding. R runs the command-line programs and summarizes
 their results.
 
-Open `04_Heritability_PRS.Rmd` in **Biowulf OnDemand RStudio**. Keep the `R/`
+Open `05_Heritability_PRS.Rmd` in **Biowulf OnDemand RStudio**. Keep the `R/`
 and `scripts/` folders beside this file. Use a compute allocation with at least
 2 CPUs; 16 GB RAM is a suggested starting request. Runtime and memory use have
 not yet been measured on the intended allocation. The R packages `data.table`,
@@ -91,7 +91,7 @@ in RStudio, then run the setup chunk and the subsequent chunks in order. You
 can also render the document from its containing directory:
 
 ```r
-rmarkdown::render("04_Heritability_PRS.Rmd")
+rmarkdown::render("05_Heritability_PRS.Rmd")
 ```
 
 The default is to execute every analysis. For a 45–60 minute class, an
@@ -102,9 +102,9 @@ The document parameters control the input path, thread count, sections to run,
 and output location. Setting `execute = FALSE` makes a **code-only preview**:
 
 ```r
-rmarkdown::render("04_Heritability_PRS.Rmd",
+rmarkdown::render("05_Heritability_PRS.Rmd",
                   params = list(execute = FALSE),
-                  output_file = "04_Heritability_PRS.preview.html")
+                  output_file = "05_Heritability_PRS.preview.html")
 ```
 
 ```{r preview-label, echo=FALSE, results='asis'}
