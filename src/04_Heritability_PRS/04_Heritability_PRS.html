@@ -449,7 +449,7 @@ display: none;
 
 
 <h1 class="title toc-ignore">Heritability and polygenic scores</h1>
-<h3 class="subtitle">Original workshop analyses in RStudio on
+<h3 class="subtitle">Statistical genetics practical in RStudio on
 Biowulf</h3>
 
 </div>
@@ -508,29 +508,29 @@ validation samples</a></li>
 <div id="purpose-and-preparation" class="section level2" number="1">
 <h2><span class="header-section-number">1</span> Purpose and
 preparation</h2>
-<p>This R Markdown document converts the <a href="https://github.com/DCEG-workshops/statgen_workshop_tutorial/blob/2023/src/04_Heritability_PRS.ipynb">original
-2023 workshop notebook</a> to RStudio on Biowulf. It retains all five
-analyses: GCTA/GREML, LD Score regression, genetic correlation,
-stratified LD Score regression, and polygenic scores constructed by
-clumping and thresholding. R calls the original command-line programs
-and reads their results. No simulated replacement data or historical
-estimates are inserted into the analyses.</p>
-<p>Open <code>Heritability_PRS.Rproj</code> in <strong>Biowulf OnDemand
-RStudio</strong>. Use a compute allocation with at least 2 CPUs; 16 GB
-RAM is a suggested starting request, not a measured requirement for this
-conversion. The R packages <code>data.table</code>, <code>knitr</code>,
-and <code>rmarkdown</code> must be installed before class. The supplied
-scripts load Biowulf’s GCTA, LDSC, PLINK 1.9, and PLINK 2 modules
-separately for each command. They do not install software or modify the
-shared data.</p>
-<p>Use <strong>Knit</strong> to run the document, or use this command
-from the project directory:</p>
+<p>This practical examines SNP heritability, shared genetic effects,
+functional annotation enrichment, and polygenic scores. The analyses use
+GCTA/GREML, LD Score regression, genetic correlation, stratified LD
+Score regression, and clumping and thresholding. R runs the command-line
+programs and summarizes their results.</p>
+<p>Open <code>04_Heritability_PRS.Rmd</code> in <strong>Biowulf OnDemand
+RStudio</strong>. Keep the <code>R/</code> and <code>scripts/</code>
+folders beside this file. Use a compute allocation with at least 2 CPUs;
+16 GB RAM is a suggested starting request. Runtime and memory use have
+not yet been measured on the intended allocation. The R packages
+<code>data.table</code>, <code>knitr</code>, and <code>rmarkdown</code>
+must be installed before class. The supplied scripts load Biowulf’s
+GCTA, LDSC, PLINK 1.9, and PLINK 2 modules separately for each
+command.</p>
+<p>Use <strong>Knit</strong> to run the document and generate an HTML
+report. To run individual chunks, first select <strong>Session &gt; Set
+Working Directory &gt; To Source File Location</strong> in RStudio, then
+run the setup chunk and the subsequent chunks in order. You can also
+render the document from its containing directory:</p>
 <pre class="r"><code>rmarkdown::render(&quot;04_Heritability_PRS.Rmd&quot;)</code></pre>
 <p>The default is to execute every analysis. For a 45–60 minute class,
 an instructor may assign genetic correlation and stratified LDSC as
-follow-up exercises, or prepare results in advance; the complete
-original workflow is retained here. Runtime has not yet been measured on
-the intended allocation.</p>
+follow-up exercises or prepare results in advance.</p>
 <p>The document parameters control the input path, thread count,
 sections to run, and output location. Setting
 <code>execute = FALSE</code> makes a <strong>code-only
@@ -541,15 +541,17 @@ preview</strong>:</p>
 <div id="input-files-and-results-directory" class="section level3" number="1.1">
 <h3><span class="header-section-number">1.1</span> Input files and
 results directory</h3>
-<p>The original notebook’s GCTA phenotype file is in the sibling
-<code>result</code> directory, not the <code>data</code> directory.
-Leaving <code>gcta_phenotype</code> empty selects that file:</p>
+<p>The GCTA phenotype file is <code>phenotype.phen</code> in the
+<code>result</code> directory beside the shared <code>data</code>
+directory. Leaving <code>gcta_phenotype</code> empty selects this file
+automatically. The paths below identify the input data, phenotype file,
+and output directory:</p>
 <pre class="r"><code>data_dir</code></pre>
 <pre><code>## [1] &quot;/vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data&quot;</code></pre>
 <pre class="r"><code>phenotype_path</code></pre>
 <pre><code>## [1] &quot;/vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/result/phenotype.phen&quot;</code></pre>
 <pre class="r"><code>run_dir</code></pre>
-<pre><code>## [1] &quot;/vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf&quot;</code></pre>
+<pre><code>## [1] &quot;/vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa&quot;</code></pre>
 <p>Each execution creates a new results subdirectory. Inputs remain
 read-only. Command arguments, standard output, standard error, exit
 status, parameters, input sizes, and the R session information are
@@ -605,19 +607,17 @@ an earlier result as a new result.</p>
 <p>If a requested section is unavailable, its code remains visible and
 it is marked <strong>Not run</strong>. A missing software module is
 distinct from a missing input; consult <code>tool-*.stderr.txt</code>
-and <code>input_inventory.csv</code> in the results directory. The
-packaged <a href="DATA_COMPLETENESS.md">data completeness report</a>
-records the separate inspection performed on 29 September 2026.</p>
+and <code>input_inventory.csv</code> in the results directory.</p>
 </div>
 </div>
 <div id="snp-heritability-with-gctagreml" class="section level2" number="2">
 <h2><span class="header-section-number">2</span> SNP heritability with
 GCTA/GREML</h2>
-<p>The original notebook describes chromosome 22 data generated from
-European 1000 Genomes genotypes, with generating heritability 0.2 and 5%
-causal variants. The supplied files contain 498 individuals and 34,386
-variants. The generating value is a simulation setting; the fitted
-estimate has sampling uncertainty.</p>
+<p>The chromosome 22 data were generated from European 1000 Genomes
+genotypes, with generating heritability 0.2 and 5% causal variants. The
+supplied files contain 498 individuals and 34,386 variants. The
+generating value is a simulation setting; the fitted estimate has
+sampling uncertainty.</p>
 <p>This section uses the supplied data and records newly computed
 results.</p>
 <div id="check-phenotype-identifiers" class="section level3" number="2.1">
@@ -665,8 +665,8 @@ run_command(
 <div id="estimate-the-variance-components" class="section level3" number="2.3">
 <h3><span class="header-section-number">2.3</span> Estimate the variance
 components</h3>
-<p>The original relatedness cutoff of 0.05 is retained. Inspect the GCTA
-log for the number of individuals retained after this cutoff.</p>
+<p>Apply a relatedness cutoff of 0.05. Inspect the GCTA log for the
+number of individuals retained after this cutoff.</p>
 <pre class="r"><code>gcta_prefix &lt;- file.path(run_dir, &quot;gcta_herit&quot;)
 run_command(
   tool_paths[[&quot;gcta&quot;]],
@@ -701,8 +701,8 @@ documentation</a>.</p>
 <div id="ld-score-regression-for-breast-cancer" class="section level2" number="3">
 <h2><span class="header-section-number">3</span> LD Score regression for
 breast cancer</h2>
-<p>The original notebook uses GWAS summary statistics for overall breast
-cancer (<code>overall_bc</code>), luminal A breast cancer
+<p>This analysis uses GWAS summary statistics for overall breast cancer
+(<code>overall_bc</code>), luminal A breast cancer
 (<code>lua_bc</code>), and triple-negative breast cancer
 (<code>tn_bc</code>). The study background is described by <a href="https://doi.org/10.1038/s41588-020-0609-2">Zhang et
 al. (2020)</a>. These analyses use the supplied summary statistics and
@@ -713,7 +713,7 @@ and genetic correlation</a> and <a href="https://github.com/bulik/ldsc/wiki/Part
 heritability</a>. The supplied launcher loads the Biowulf LDSC module. A
 custom installation can instead be selected with the
 <code>tool_mode</code>, <code>ldsc_dir</code>, and
-<code>ldsc_python</code> parameters. The original repository also links
+<code>ldsc_python</code> parameters. The authors’ repository also links
 to the <a href="https://github.com/CBIIT/ldsc">CBIIT Python 3
 implementation</a>.</p>
 <p>This section uses the supplied data and records newly computed
@@ -729,7 +729,7 @@ summary statistics</h3>
 <thead>
 <tr class="header">
 <th align="left">Column</th>
-<th align="left">Meaning in the original notebook</th>
+<th align="left">Meaning in the supplied data</th>
 </tr>
 </thead>
 <tbody>
@@ -761,14 +761,13 @@ position</td>
 </tr>
 </tbody>
 </table>
-<p>The <code>N</code> column is retained. The notebook describes this
-choice as estimating genetic variance on the logit scale. Its separate
-reference to a “frailty scale” estimate is not a sufficient definition
-of a liability-scale transformation. The commands below supply neither
-population prevalence nor sample prevalence. Interpret the fitted
-variance in the context of the supplied <code>N</code> definition; do
-not report it automatically as liability-scale heritability or a
-proportion of an individual’s disease risk.</p>
+<p>The supplied <code>N</code> definition is used to estimate genetic
+variance on the logit scale. The commands below supply neither
+population prevalence nor sample prevalence for a liability-scale
+transformation. Interpret the fitted variance in the context of this
+<code>N</code> definition; do not report it automatically as
+liability-scale heritability or a proportion of an individual’s disease
+risk.</p>
 <p>Read a few rows for inspection without loading the complete overall
 breast cancer file into R. LDSC will read the full file in the next
 step.</p>
@@ -882,10 +881,10 @@ knitr::kable(bcac_overall)</code></pre>
 <div id="prepare-overall-breast-cancer-summary-statistics" class="section level3" number="3.2">
 <h3><span class="header-section-number">3.2</span> Prepare overall
 breast cancer summary statistics</h3>
-<p>Retain the original filtering thresholds: imputation quality at least
-0.3 and minor allele frequency at least 0.01. Alleles are matched
-against the supplied HapMap3 SNP list. Examine the munging log to see
-how many variants remain after each filter.</p>
+<p>Require imputation quality of at least 0.3 and minor allele frequency
+of at least 0.01. Alleles are matched against the supplied HapMap3 SNP
+list. Examine the munging log to see how many variants remain after each
+filter.</p>
 <pre class="r"><code>munge_overall_prefix &lt;- file.path(run_dir, &quot;ldsc_herit_overall&quot;)
 munge_result &lt;- paste0(munge_overall_prefix, &quot;.sumstats.gz&quot;)
 
@@ -915,7 +914,7 @@ run_ldsc(
 ## Call: 
 ## ./munge_sumstats.py \
 ## --signed-sumstats Z,0 \
-## --out /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_overall \
+## --out /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_overall \
 ## --merge-alleles /vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data/eur_w_ld_chr/w_hm3.snplist \
 ## --info-min 0.3 \
 ## --chunksize 500000 \
@@ -947,7 +946,7 @@ run_ldsc(
 ## Removed 17737 SNPs with N &lt; 33553.1203979 (1086619 SNPs remain).
 ## Median value of SIGNED_SUMSTATS was -0.00206242490166, which seems sensible.
 ## Removed 137 SNPs whose alleles did not match --merge-alleles (1086482 SNPs remain).
-## Writing summary statistics for 1217311 SNPs (1086482 with nonmissing beta) to /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_overall.sumstats.gz.
+## Writing summary statistics for 1217311 SNPs (1086482 with nonmissing beta) to /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_overall.sumstats.gz.
 ## 
 ## Metadata:
 ## Mean chi^2 = 1.521
@@ -955,16 +954,15 @@ run_ldsc(
 ## Max chi^2 = 1399.129
 ## 1571 Genome-wide significant SNPs (some may have been removed by filtering).
 ## 
-## Conversion finished at Tue Sep 29 13:17:22 2026
-## Total time elapsed: 29.21s</code></pre>
+## Conversion finished at Tue Sep 29 13:38:47 2026
+## Total time elapsed: 33.71s</code></pre>
 </div>
 <div id="estimate-the-overall-breast-cancer-genetic-variance" class="section level3" number="3.3">
 <h3><span class="header-section-number">3.3</span> Estimate the overall
 breast cancer genetic variance</h3>
 <p>The same chromosome-specific European LD scores are used for the
-reference and regression weights, as in the original notebook. The
-trailing slash is required because LDSC appends chromosome numbers to
-this prefix.</p>
+reference and regression weights. The trailing slash is required because
+LDSC appends chromosome numbers to this prefix.</p>
 <pre class="r"><code>eur_ld_prefix &lt;- paste0(file.path(data_dir, &quot;eur_w_ld_chr&quot;), &quot;/&quot;)
 h2_overall_prefix &lt;- file.path(run_dir, &quot;h2_overall&quot;)
 
@@ -990,13 +988,13 @@ run_ldsc(
 ## *********************************************************************
 ## Call: 
 ## ./ldsc.py \
-## --h2 /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_overall.sumstats.gz \
+## --h2 /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_overall.sumstats.gz \
 ## --ref-ld-chr /vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data/eur_w_ld_chr/ \
-## --out /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/h2_overall \
+## --out /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/h2_overall \
 ## --w-ld-chr /vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data/eur_w_ld_chr/ 
 ## 
-## Beginning analysis at Tue Sep 29 13:17:25 2026
-## Reading summary statistics from /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_overall.sumstats.gz ...
+## Beginning analysis at Tue Sep 29 13:38:50 2026
+## Reading summary statistics from /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_overall.sumstats.gz ...
 ## Read summary statistics for 1086482 SNPs.
 ## Reading reference panel LD Score from /vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data/eur_w_ld_chr/[1-22] ... (ldscore_fromlist)
 ## Read reference panel LD Scores for 1290028 SNPs.
@@ -1011,13 +1009,11 @@ run_ldsc(
 ## Mean Chi^2: 1.5205
 ## Intercept: 1.0863 (0.0122)
 ## Ratio: 0.1657 (0.0235)
-## Analysis finished at Tue Sep 29 13:17:30 2026
-## Total time elapsed: 5.22s</code></pre>
+## Analysis finished at Tue Sep 29 13:38:57 2026
+## Total time elapsed: 6.41s</code></pre>
 <p>Read the estimate together with its standard error, the mean
 chi-square statistic, and the intercept. Record the scale implied by the
-supplied sample size definition. All results printed here come from this
-run; the notebook’s previously reported numerical estimate is not
-inserted as an analysis result.</p>
+supplied sample size definition.</p>
 </div>
 <div id="estimate-the-genetic-correlation-between-subtypes" class="section level3" number="3.4">
 <h3><span class="header-section-number">3.4</span> Estimate the genetic
@@ -1264,7 +1260,7 @@ for (subtype in names(subtype_inputs)) {
 ## Call: 
 ## ./munge_sumstats.py \
 ## --signed-sumstats Z,0 \
-## --out /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_lua \
+## --out /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_lua \
 ## --merge-alleles /vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data/eur_w_ld_chr/w_hm3.snplist \
 ## --info-min 0.3 \
 ## --chunksize 500000 \
@@ -1296,7 +1292,7 @@ for (subtype in names(subtype_inputs)) {
 ## Removed 46337 SNPs with N &lt; 21719.7960918 (1109707 SNPs remain).
 ## Median value of SIGNED_SUMSTATS was -0.00136583037108, which seems sensible.
 ## Removed 1 SNPs whose alleles did not match --merge-alleles (1109706 SNPs remain).
-## Writing summary statistics for 1217311 SNPs (1109706 with nonmissing beta) to /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_lua.sumstats.gz.
+## Writing summary statistics for 1217311 SNPs (1109706 with nonmissing beta) to /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_lua.sumstats.gz.
 ## 
 ## Metadata:
 ## Mean chi^2 = 1.559
@@ -1304,8 +1300,8 @@ for (subtype in names(subtype_inputs)) {
 ## Max chi^2 = 1401.857
 ## 2351 Genome-wide significant SNPs (some may have been removed by filtering).
 ## 
-## Conversion finished at Tue Sep 29 13:17:47 2026
-## Total time elapsed: 14.93s 
+## Conversion finished at Tue Sep 29 13:39:16 2026
+## Total time elapsed: 16.76s
 ## Running munge_tn 
 ## *********************************************************************
 ## * LD Score Regression (LDSC)
@@ -1317,7 +1313,7 @@ for (subtype in names(subtype_inputs)) {
 ## Call: 
 ## ./munge_sumstats.py \
 ## --signed-sumstats Z,0 \
-## --out /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_tn \
+## --out /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_tn \
 ## --merge-alleles /vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data/eur_w_ld_chr/w_hm3.snplist \
 ## --info-min 0.3 \
 ## --chunksize 500000 \
@@ -1348,7 +1344,7 @@ for (subtype in names(subtype_inputs)) {
 ## Removed 43766 SNPs with N &lt; 5897.08919163 (1112281 SNPs remain).
 ## Median value of SIGNED_SUMSTATS was 0.00592960612155, which seems sensible.
 ## Removed 1 SNPs whose alleles did not match --merge-alleles (1112280 SNPs remain).
-## Writing summary statistics for 1217311 SNPs (1112280 with nonmissing beta) to /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_tn.sumstats.gz.
+## Writing summary statistics for 1217311 SNPs (1112280 with nonmissing beta) to /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_tn.sumstats.gz.
 ## 
 ## Metadata:
 ## Mean chi^2 = 1.117
@@ -1356,8 +1352,8 @@ for (subtype in names(subtype_inputs)) {
 ## Max chi^2 = 212.793
 ## 241 Genome-wide significant SNPs (some may have been removed by filtering).
 ## 
-## Conversion finished at Tue Sep 29 13:18:04 2026
-## Total time elapsed: 14.37s</code></pre>
+## Conversion finished at Tue Sep 29 13:39:37 2026
+## Total time elapsed: 15.77s</code></pre>
 <pre class="r"><code>munge_result_lua &lt;- file.path(run_dir, &quot;ldsc_herit_lua.sumstats.gz&quot;)
 munge_result_tn &lt;- file.path(run_dir, &quot;ldsc_herit_tn.sumstats.gz&quot;)</code></pre>
 <pre class="r"><code>rg_prefix &lt;- file.path(run_dir, &quot;rg_lua_tn&quot;)
@@ -1384,12 +1380,12 @@ run_ldsc(
 ## Call: 
 ## ./ldsc.py \
 ## --ref-ld-chr /vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data/eur_w_ld_chr/ \
-## --out /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/rg_lua_tn \
-## --rg /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_lua.sumstats.gz,/vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_tn.sumstats.gz \
+## --out /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/rg_lua_tn \
+## --rg /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_lua.sumstats.gz,/vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_tn.sumstats.gz \
 ## --w-ld-chr /vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data/eur_w_ld_chr/ 
 ## 
-## Beginning analysis at Tue Sep 29 13:18:06 2026
-## Reading summary statistics from /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_lua.sumstats.gz ...
+## Beginning analysis at Tue Sep 29 13:39:41 2026
+## Reading summary statistics from /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_lua.sumstats.gz ...
 ## Read summary statistics for 1109706 SNPs.
 ## Reading reference panel LD Score from /vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data/eur_w_ld_chr/[1-22] ... (ldscore_fromlist)
 ## Read reference panel LD Scores for 1290028 SNPs.
@@ -1399,7 +1395,7 @@ run_ldsc(
 ## After merging with reference panel LD, 1104512 SNPs remain.
 ## After merging with regression SNP LD, 1104512 SNPs remain.
 ## Computing rg for phenotype 2/2
-## Reading summary statistics from /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_tn.sumstats.gz ...
+## Reading summary statistics from /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_tn.sumstats.gz ...
 ## Read summary statistics for 1217311 SNPs.
 ## After merging with summary statistics, 1104512 SNPs remain.
 ## 1102200 SNPs with valid alleles.
@@ -1434,11 +1430,11 @@ run_ldsc(
 ## 
 ## 
 ## Summary of Genetic Correlation Results
-## p1                                                                                                                              p2      rg      se       z           p  h2_obs  h2_obs_se  h2_int  h2_int_se  gcov_int  gcov_int_se
-## /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_lua.sumstats.gz  /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_tn.sumstats.gz  0.4829  0.0512  9.4264  4.2421e-21  0.5972     0.0788  1.0198     0.0089    0.2136       0.0075
+## p1                                                                                                                            p2      rg      se       z           p  h2_obs  h2_obs_se  h2_int  h2_int_se  gcov_int  gcov_int_se
+## /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_lua.sumstats.gz  /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_tn.sumstats.gz  0.4829  0.0512  9.4264  4.2421e-21  0.5972     0.0788  1.0198     0.0089    0.2136       0.0075
 ## 
-## Analysis finished at Tue Sep 29 13:18:13 2026
-## Total time elapsed: 7.67s</code></pre>
+## Analysis finished at Tue Sep 29 13:39:50 2026
+## Total time elapsed: 9.49s</code></pre>
 <p>Report the genetic correlation with its standard error. Discuss
 whether the estimate suggests shared common-variant effects between the
 two subtypes. Genetic correlation alone does not establish a causal
@@ -1448,9 +1444,11 @@ relationship.</p>
 <div id="stratified-ld-score-regression" class="section level2" number="4">
 <h2><span class="header-section-number">4</span> Stratified LD Score
 regression</h2>
-<p>This section retains the original baseline-LD model, annotation
-overlap option, allele-frequency files, and regression weights. It uses
-the overall breast cancer summary statistics prepared above.</p>
+<p>Stratified LD Score regression estimates how genetic variance is
+distributed across functional annotations. This analysis uses the
+baseline-LD model with overlapping annotations, the supplied
+allele-frequency files and regression weights, and the overall breast
+cancer summary statistics prepared above.</p>
 <p>This section uses the supplied data and records newly computed
 results.</p>
 <pre class="r"><code>sldsc_prefix &lt;- file.path(run_dir, &quot;h2_sldsc&quot;)
@@ -1484,15 +1482,15 @@ run_ldsc(
 ## *********************************************************************
 ## Call: 
 ## ./ldsc.py \
-## --h2 /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_overall.sumstats.gz \
+## --h2 /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_overall.sumstats.gz \
 ## --ref-ld-chr /vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data/1000G_Phase3_baselineLD_ldscores/baselineLD. \
-## --out /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/h2_sldsc \
+## --out /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/h2_sldsc \
 ## --overlap-annot  \
 ## --frqfile-chr /vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data/1000G_Phase3_frq/1000G.EUR.QC. \
 ## --w-ld-chr /vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data/1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC. 
 ## 
-## Beginning analysis at Tue Sep 29 13:18:16 2026
-## Reading summary statistics from /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/ldsc_herit_overall.sumstats.gz ...
+## Beginning analysis at Tue Sep 29 13:39:53 2026
+## Reading summary statistics from /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/ldsc_herit_overall.sumstats.gz ...
 ## Read summary statistics for 1086482 SNPs.
 ## Reading reference panel LD Score from /vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data/1000G_Phase3_baselineLD_ldscores/baselineLD.[1-22] ... (ldscore_fromlist)
 ## Read reference panel LD Scores for 1190321 SNPs.
@@ -1509,9 +1507,9 @@ run_ldsc(
 ## Intercept: 1.0591 (0.0144)
 ## Ratio: 0.1197 (0.0292)
 ## Reading annot matrix from /vf/users/DCEG_shared/statgen_workshop_2026/data/statgen_workshop_04Heritability_PRS/data/1000G_Phase3_baselineLD_ldscores/baselineLD.[1-22] ... (annot)
-## Results printed to /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf/h2_sldsc.results
-## Analysis finished at Tue Sep 29 13:19:32 2026
-## Total time elapsed: 1.0m:15.78s</code></pre>
+## Results printed to /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa/h2_sldsc.results
+## Analysis finished at Tue Sep 29 13:41:13 2026
+## Total time elapsed: 1.0m:20.76s</code></pre>
 <div id="inspect-annotation-enrichment-and-its-uncertainty" class="section level3" number="4.1">
 <h3><span class="header-section-number">4.1</span> Inspect annotation
 enrichment and its uncertainty</h3>
@@ -1651,10 +1649,9 @@ estimate</caption>
 </tr>
 </tbody>
 </table>
-<p>The original notebook also inspects row 13, which was the Andersson
-enhancer annotation in its saved output. Select that annotation by name
-so that a change in row order cannot silently change the
-interpretation.</p>
+<p>Examine the Andersson enhancer annotation in more detail. Select it
+by name to identify the same annotation regardless of the results
+table’s row order.</p>
 <pre class="r"><code>andersson_result &lt;- enrichment_result[
   enrichment_result$Category == &quot;Enhancer_AnderssonL2_0&quot;
 ]
@@ -1708,28 +1705,25 @@ rather than adding their estimated proportions.</p>
 <div id="polygenic-scores-by-clumping-and-thresholding" class="section level2" number="5">
 <h2><span class="header-section-number">5</span> Polygenic scores by
 clumping and thresholding</h2>
-<p>This exercise uses the original chromosome 22 simulated data,
-generated using 1000 Genomes European reference data.
-<code>EUR_sum_data</code> provides association statistics,
-<code>1kg_eur_22/chr_22</code> is the LD reference, and
-<code>prs_genotype/chr22_test</code> contains the target genotypes. The
-target outcome is <code>y_out</code>. These inputs are separate from the
-breast cancer summary statistics used above.</p>
+<p>This exercise uses simulated chromosome 22 data, generated using 1000
+Genomes European reference data. <code>EUR_sum_data</code> provides
+association statistics, <code>1kg_eur_22/chr_22</code> is the LD
+reference, and <code>prs_genotype/chr22_test</code> contains the target
+genotypes. The target outcome is <code>y_out</code>. These inputs are
+separate from the breast cancer summary statistics used above.</p>
 <p>We use PLINK 1.9 for clumping, PLINK 2 for scoring, and R for outcome
-regression. The nine P-value thresholds and regression models reproduce
-the original notebook. Sample IDs are explicitly matched before
-analysis.</p>
+regression. We compare nine P-value thresholds and match sample IDs
+explicitly before analysis.</p>
 <p>This section uses the supplied data and records newly computed
 results.</p>
 <div id="check-the-association-statistics-and-target-sample-ids" class="section level3" number="5.1">
 <h3><span class="header-section-number">5.1</span> Check the association
 statistics and target sample IDs</h3>
-<p>The original code divides the 20,000 rows of <code>y_out</code> into
-10,000 tuning samples and 10,000 validation samples. We retain that
-division and record it in <code>prs_sample_partition.tsv</code>. The
-notebook’s prose gave inconsistent sample ranges; the division here
-follows its executed code. Scores are matched to these samples by ID, so
-reordering a score file does not change the partition.</p>
+<p>Use the first 10,000 rows of <code>y_out</code> as tuning samples and
+the next 10,000 rows as validation samples. Record this partition in
+<code>prs_sample_partition.tsv</code>. Scores are matched to these
+samples by ID, so reordering a score file does not change the
+partition.</p>
 <pre class="r"><code>sum_data_file &lt;- file.path(data_dir, &quot;EUR_sum_data&quot;)
 reference_prefix &lt;- file.path(data_dir, &quot;1kg_eur_22&quot;, &quot;chr_22&quot;)
 target_prefix &lt;- file.path(data_dir, &quot;prs_genotype&quot;, &quot;chr22_test&quot;)
@@ -1795,8 +1789,7 @@ knitr::kable(outcome[, .(samples = .N), by = subset])</code></pre>
 <h3><span class="header-section-number">5.2</span> Select index variants
 using the LD reference</h3>
 <p>The clumping radius is 500 kb, the LD threshold is <span class="math inline">\(r^2 = 0.1\)</span>, and candidate index variants
-may have P-values up to 1. The original notebook’s code uses 0.1; its
-prose incorrectly stated 0.01. We retain the code’s value. See the <a href="https://www.cog-genomics.org/plink/1.9/postproc#clump">PLINK
+may have P-values up to 1. See the <a href="https://www.cog-genomics.org/plink/1.9/postproc#clump">PLINK
 clumping documentation</a> for the interpretation of these
 parameters.</p>
 <pre class="r"><code>clump_prefix &lt;- file.path(run_dir, &quot;LD_clump&quot;)
@@ -1834,11 +1827,11 @@ head(prs_prep)</code></pre>
 <h3><span class="header-section-number">5.3</span> Calculate a score at
 each P-value threshold</h3>
 <p>Each score sums effect-allele dosage multiplied by its estimated
-coefficient. The original <code>no-mean-imputation</code> option is
-retained, so missing genotypes do not receive a mean dosage
-contribution. We request <code>SCORE1_SUM</code>, as in the notebook.
-See the <a href="https://www.cog-genomics.org/plink/2.0/score">PLINK 2
-scoring documentation</a>.</p>
+coefficient. With the <code>no-mean-imputation</code> option, missing
+genotypes do not receive a mean dosage contribution. The requested
+output column, <code>SCORE1_SUM</code>, contains the score sum. See the
+<a href="https://www.cog-genomics.org/plink/2.0/score">PLINK 2 scoring
+documentation</a>.</p>
 <p>The table records both selected index variants and variants present
 in the target genotypes. PLINK skips absent variants; an allele mismatch
 is an error requiring investigation. A threshold with no available
@@ -2009,10 +2002,9 @@ knitr::kable(tuning_results, digits = 5)</code></pre>
 <div id="select-the-threshold-using-the-tuning-samples" class="section level3" number="5.4">
 <h3><span class="header-section-number">5.4</span> Select the threshold
 using the tuning samples</h3>
-<p>We select the threshold with the largest tuning <span class="math inline">\(R^2\)</span>. If thresholds tie, the first one in
-the prespecified order is selected, matching <code>which.max()</code> in
-the original notebook. Validation outcomes do not enter threshold
-selection.</p>
+<p>Select the threshold with the largest tuning <span class="math inline">\(R^2\)</span>. If thresholds tie, the first one in
+the prespecified order is selected. Validation outcomes do not enter
+threshold selection.</p>
 <pre class="r"><code>eligible &lt;- which(is.finite(tuning_results$tuning_r_squared))
 if (!length(eligible)) stop(&quot;No P-value threshold produced an estimable tuning model.&quot;)
 best_index &lt;- eligible[which.max(tuning_results$tuning_r_squared[eligible])]
@@ -2058,12 +2050,13 @@ points(selected_threshold$p_threshold, selected_threshold$tuning_r_squared,
 <div id="evaluate-the-selected-score-in-the-validation-samples" class="section level3" number="5.5">
 <h3><span class="header-section-number">5.5</span> Evaluate the selected
 score in the validation samples</h3>
-<p>The original analysis reports the <span class="math inline">\(R^2\)</span> from <code>lm(y ~ score)</code>
-fitted within the validation samples. We reproduce that association
-measure. The threshold and variant weights are fixed before this step,
-but the regression intercept and slope are estimated in the validation
-samples. Thus this is not a measure of calibration or prediction error
-for an outcome model fitted entirely in the tuning samples.</p>
+<p>Evaluate the association between the selected score and the outcome
+using <span class="math inline">\(R^2\)</span> from
+<code>lm(y ~ score)</code> fitted within the validation samples. The
+threshold and variant weights are fixed before this step, but the
+regression intercept and slope are estimated in the validation samples.
+Thus this is not a measure of calibration or prediction error for an
+outcome model fitted entirely in the tuning samples.</p>
 <pre class="r"><code>selected_scores &lt;- prs_align_scores(
   file.path(run_dir, paste0(&quot;prs_&quot;, best_index, &quot;.sscore&quot;)), outcome, target_fam
 )
@@ -2149,11 +2142,7 @@ predictive performance or transferability to another population.</p>
 </tr>
 </tbody>
 </table>
-<pre><code>## Results directory: /vf/users/wongs6/statgen_workshop_2026/original-rmarkdown/results/run-20260929-131649-377b425f38aeaf</code></pre>
-<p>The <a href="CONVERSION_NOTES.md">conversion notes</a> map these
-sections to the original notebook and describe corrections to its paths,
-sample matching, and explanatory text. The statistical models, input
-datasets, filtering thresholds, and tuning partition are retained.</p>
+<pre><code>## Results directory: /vf/users/wongs6/statgen_workshop_2026/heritability-prs/results/run-20260929-133802-38aae1209f79aa</code></pre>
 <pre><code>## R version 4.5.2 (2025-10-31)
 ## Platform: x86_64-pc-linux-gnu
 ## Running under: Rocky Linux 8.7 (Green Obsidian)

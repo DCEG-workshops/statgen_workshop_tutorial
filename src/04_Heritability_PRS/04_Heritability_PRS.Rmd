@@ -1,6 +1,6 @@
 ---
 title: "Heritability and polygenic scores"
-subtitle: "Original workshop analyses in RStudio on Biowulf"
+subtitle: "Statistical genetics practical in RStudio on Biowulf"
 output:
   html_document:
     toc: true
@@ -71,22 +71,24 @@ section_note <- function(section) {
 
 ## Purpose and preparation
 
-This R Markdown document converts the
-[original 2023 workshop notebook](https://github.com/DCEG-workshops/statgen_workshop_tutorial/blob/2023/src/04_Heritability_PRS.ipynb)
-to RStudio on Biowulf. It retains all five analyses: GCTA/GREML, LD Score
-regression, genetic correlation, stratified LD Score regression, and polygenic
-scores constructed by clumping and thresholding. R calls the original command-line
-programs and reads their results. No simulated replacement data or historical
-estimates are inserted into the analyses.
+This practical examines SNP heritability, shared genetic effects, functional
+annotation enrichment, and polygenic scores. The analyses use GCTA/GREML,
+LD Score regression, genetic correlation, stratified LD Score regression, and
+clumping and thresholding. R runs the command-line programs and summarizes
+their results.
 
-Open `Heritability_PRS.Rproj` in **Biowulf OnDemand RStudio**. Use a compute
-allocation with at least 2 CPUs; 16 GB RAM is a suggested starting request,
-not a measured requirement for this conversion. The R packages `data.table`,
+Open `04_Heritability_PRS.Rmd` in **Biowulf OnDemand RStudio**. Keep the `R/`
+and `scripts/` folders beside this file. Use a compute allocation with at least
+2 CPUs; 16 GB RAM is a suggested starting request. Runtime and memory use have
+not yet been measured on the intended allocation. The R packages `data.table`,
 `knitr`, and `rmarkdown` must be installed before class. The supplied scripts
 load Biowulf's GCTA, LDSC, PLINK 1.9, and PLINK 2 modules separately for each
-command. They do not install software or modify the shared data.
+command.
 
-Use **Knit** to run the document, or use this command from the project directory:
+Use **Knit** to run the document and generate an HTML report. To run individual
+chunks, first select **Session > Set Working Directory > To Source File Location**
+in RStudio, then run the setup chunk and the subsequent chunks in order. You
+can also render the document from its containing directory:
 
 ```r
 rmarkdown::render("04_Heritability_PRS.Rmd")
@@ -94,8 +96,7 @@ rmarkdown::render("04_Heritability_PRS.Rmd")
 
 The default is to execute every analysis. For a 45–60 minute class, an
 instructor may assign genetic correlation and stratified LDSC as follow-up
-exercises, or prepare results in advance; the complete original workflow is
-retained here. Runtime has not yet been measured on the intended allocation.
+exercises or prepare results in advance.
 
 The document parameters control the input path, thread count, sections to run,
 and output location. Setting `execute = FALSE` makes a **code-only preview**:
@@ -108,15 +109,16 @@ rmarkdown::render("04_Heritability_PRS.Rmd",
 
 ```{r preview-label, echo=FALSE, results='asis'}
 if (!isTRUE(params$execute)) {
-  cat("**This HTML is a code-only preview. No GCTA, LDSC, or PLINK analyses were run.** ",
-      "The supplied Biowulf data were inspected separately; see DATA_COMPLETENESS.md.\n\n", sep = "")
+  cat("**This HTML is a code-only preview. No GCTA, LDSC, or PLINK analyses were run.**\n\n")
 }
 ```
 
 ### Input files and results directory
 
-The original notebook's GCTA phenotype file is in the sibling `result` directory,
-not the `data` directory. Leaving `gcta_phenotype` empty selects that file:
+The GCTA phenotype file is `phenotype.phen` in the `result` directory beside
+the shared `data` directory. Leaving `gcta_phenotype` empty selects this file
+automatically. The paths below identify the input data, phenotype file, and
+output directory:
 
 ```{r show-paths}
 data_dir
@@ -140,13 +142,11 @@ if (isTRUE(params$execute)) {
 If a requested section is unavailable, its code remains visible and it is
 marked **Not run**. A missing software module is distinct from a missing input;
 consult `tool-*.stderr.txt` and `input_inventory.csv` in the results directory.
-The packaged [data completeness report](DATA_COMPLETENESS.md) records the
-separate inspection performed on 29 September 2026.
 
 ## SNP heritability with GCTA/GREML
 
-The original notebook describes chromosome 22 data generated from European
-1000 Genomes genotypes, with generating heritability 0.2 and 5% causal variants.
+The chromosome 22 data were generated from European 1000 Genomes genotypes,
+with generating heritability 0.2 and 5% causal variants.
 The supplied files contain 498 individuals and 34,386 variants. The generating
 value is a simulation setting; the fitted estimate has sampling uncertainty.
 
@@ -183,8 +183,8 @@ run_command(
 
 ### Estimate the variance components
 
-The original relatedness cutoff of 0.05 is retained. Inspect the GCTA log for
-the number of individuals retained after this cutoff.
+Apply a relatedness cutoff of 0.05. Inspect the GCTA log for the number of
+individuals retained after this cutoff.
 
 ```{r gcta-reml, eval=can_run[['gcta']]}
 gcta_prefix <- file.path(run_dir, "gcta_herit")
@@ -208,7 +208,7 @@ the small sample size and restriction to chromosome 22. See the
 
 ## LD Score regression for breast cancer
 
-The original notebook uses GWAS summary statistics for overall breast cancer
+This analysis uses GWAS summary statistics for overall breast cancer
 (`overall_bc`), luminal A breast cancer (`lua_bc`), and triple-negative breast
 cancer (`tn_bc`). The study background is described by
 [Zhang et al. (2020)](https://doi.org/10.1038/s41588-020-0609-2).
@@ -220,7 +220,8 @@ The primary software reference is the original authors'
 [heritability and genetic correlation](https://github.com/bulik/ldsc/wiki/Heritability-and-Genetic-Correlation)
 and [partitioned heritability](https://github.com/bulik/ldsc/wiki/Partitioned-Heritability).
 The supplied launcher loads the Biowulf LDSC module. A custom installation
-can instead be selected with the `tool_mode`, `ldsc_dir`, and `ldsc_python` parameters. The original repository also links to the
+can instead be selected with the `tool_mode`, `ldsc_dir`, and `ldsc_python`
+parameters. The authors' repository also links to the
 [CBIIT Python 3 implementation](https://github.com/CBIIT/ldsc).
 
 ```{r ldsc-status, echo=FALSE, results='asis'}
@@ -229,7 +230,7 @@ section_note("ldsc")
 
 ### Inspect the supplied summary statistics
 
-| Column | Meaning in the original notebook |
+| Column | Meaning in the supplied data |
 |:--|:--|
 | `snpid` | rs identifier when available; otherwise chromosome and position |
 | `CHR`, `bp` | Chromosome and GRCh37 position |
@@ -238,13 +239,11 @@ section_note("ldsc")
 | `info`, `MAF` | Imputation quality and minor allele frequency |
 | `N` | Supplied effective sample size, calculated as \(1 / [\operatorname{var}(\hat\beta)\,2f(1-f)]\) |
 
-The `N` column is retained. The notebook describes this choice as estimating
-genetic variance on the logit scale. Its separate reference to a “frailty scale”
-estimate is not a sufficient definition of a liability-scale transformation.
-The commands below supply neither population prevalence nor sample prevalence.
-Interpret the fitted variance in the context of the supplied `N` definition;
-do not report it automatically as liability-scale heritability or a proportion
-of an individual's disease risk.
+The supplied `N` definition is used to estimate genetic variance on the logit
+scale. The commands below supply neither population prevalence nor sample
+prevalence for a liability-scale transformation. Interpret the fitted variance
+in the context of this `N` definition; do not report it automatically as
+liability-scale heritability or a proportion of an individual's disease risk.
 
 Read a few rows for inspection without loading the complete overall breast
 cancer file into R. LDSC will read the full file in the next step.
@@ -258,8 +257,8 @@ knitr::kable(bcac_overall)
 
 ### Prepare overall breast cancer summary statistics
 
-Retain the original filtering thresholds: imputation quality at least 0.3 and
-minor allele frequency at least 0.01. Alleles are matched against the supplied
+Require imputation quality of at least 0.3 and minor allele frequency of at
+least 0.01. Alleles are matched against the supplied
 HapMap3 SNP list. Examine the munging log to see how many variants remain after
 each filter.
 
@@ -287,8 +286,8 @@ read_ldsc_log(munge_overall_prefix)
 ### Estimate the overall breast cancer genetic variance
 
 The same chromosome-specific European LD scores are used for the reference
-and regression weights, as in the original notebook. The trailing slash is
-required because LDSC appends chromosome numbers to this prefix.
+and regression weights. The trailing slash is required because LDSC appends
+chromosome numbers to this prefix.
 
 ```{r ldsc-overall-h2, eval=can_run[['ldsc']]}
 eur_ld_prefix <- paste0(file.path(data_dir, "eur_w_ld_chr"), "/")
@@ -310,8 +309,7 @@ read_ldsc_log(h2_overall_prefix)
 
 Read the estimate together with its standard error, the mean chi-square
 statistic, and the intercept. Record the scale implied by the supplied sample
-size definition. All results printed here come from this run; the notebook's
-previously reported numerical estimate is not inserted as an analysis result.
+size definition.
 
 ### Estimate the genetic correlation between subtypes
 
@@ -372,9 +370,10 @@ Genetic correlation alone does not establish a causal relationship.
 
 ## Stratified LD Score regression
 
-This section retains the original baseline-LD model, annotation overlap
-option, allele-frequency files, and regression weights. It uses the overall
-breast cancer summary statistics prepared above.
+Stratified LD Score regression estimates how genetic variance is distributed
+across functional annotations. This analysis uses the baseline-LD model with
+overlapping annotations, the supplied allele-frequency files and regression
+weights, and the overall breast cancer summary statistics prepared above.
 
 ```{r sldsc-status, echo=FALSE, results='asis'}
 section_note("sldsc")
@@ -434,9 +433,8 @@ knitr::kable(
 )
 ```
 
-The original notebook also inspects row 13, which was the Andersson enhancer
-annotation in its saved output. Select that annotation by name so that a
-change in row order cannot silently change the interpretation.
+Examine the Andersson enhancer annotation in more detail. Select it by name
+to identify the same annotation regardless of the results table's row order.
 
 ```{r sldsc-andersson-enhancers, eval=can_run[['sldsc']]}
 andersson_result <- enrichment_result[
@@ -458,7 +456,7 @@ estimated proportions.
 
 ## Polygenic scores by clumping and thresholding
 
-This exercise uses the original chromosome 22 simulated data, generated using
+This exercise uses simulated chromosome 22 data, generated using
 1000 Genomes European reference data. `EUR_sum_data` provides association
 statistics, `1kg_eur_22/chr_22` is the LD reference, and
 `prs_genotype/chr22_test` contains the target genotypes. The target outcome is
@@ -466,8 +464,8 @@ statistics, `1kg_eur_22/chr_22` is the LD reference, and
 used above.
 
 We use PLINK 1.9 for clumping, PLINK 2 for scoring, and R for outcome regression.
-The nine P-value thresholds and regression models reproduce the original
-notebook. Sample IDs are explicitly matched before analysis.
+We compare nine P-value thresholds and match sample IDs explicitly before
+analysis.
 
 ```{r prs-status, echo=FALSE, results='asis'}
 section_note("prs")
@@ -475,11 +473,10 @@ section_note("prs")
 
 ### Check the association statistics and target sample IDs
 
-The original code divides the 20,000 rows of `y_out` into 10,000 tuning samples
-and 10,000 validation samples. We retain that division and record it in
-`prs_sample_partition.tsv`. The notebook's prose gave inconsistent sample
-ranges; the division here follows its executed code. Scores are matched to these
-samples by ID, so reordering a score file does not change the partition.
+Use the first 10,000 rows of `y_out` as tuning samples and the next 10,000 rows
+as validation samples. Record this partition in `prs_sample_partition.tsv`.
+Scores are matched to these samples by ID, so reordering a score file does not
+change the partition.
 
 ```{r prs-inputs, eval=can_run[['prs']]}
 sum_data_file <- file.path(data_dir, "EUR_sum_data")
@@ -513,8 +510,7 @@ head(eur_sum)
 ### Select index variants using the LD reference
 
 The clumping radius is 500 kb, the LD threshold is $r^2 = 0.1$, and candidate
-index variants may have P-values up to 1. The original notebook's code uses
-0.1; its prose incorrectly stated 0.01. We retain the code's value. See the
+index variants may have P-values up to 1. See the
 [PLINK clumping documentation](https://www.cog-genomics.org/plink/1.9/postproc#clump)
 for the interpretation of these parameters.
 
@@ -546,9 +542,9 @@ head(prs_prep)
 ### Calculate a score at each P-value threshold
 
 Each score sums effect-allele dosage multiplied by its estimated coefficient.
-The original `no-mean-imputation` option is retained, so missing genotypes do
-not receive a mean dosage contribution. We request `SCORE1_SUM`, as in the
-notebook. See the [PLINK 2 scoring documentation](https://www.cog-genomics.org/plink/2.0/score).
+With the `no-mean-imputation` option, missing genotypes do not receive a mean
+dosage contribution. The requested output column, `SCORE1_SUM`, contains the
+score sum. See the [PLINK 2 scoring documentation](https://www.cog-genomics.org/plink/2.0/score).
 
 The table records both selected index variants and variants present in the
 target genotypes. PLINK skips absent variants; an allele mismatch is an error
@@ -619,9 +615,9 @@ knitr::kable(tuning_results, digits = 5)
 
 ### Select the threshold using the tuning samples
 
-We select the threshold with the largest tuning $R^2$. If thresholds tie, the
-first one in the prespecified order is selected, matching `which.max()` in the
-original notebook. Validation outcomes do not enter threshold selection.
+Select the threshold with the largest tuning $R^2$. If thresholds tie, the
+first one in the prespecified order is selected. Validation outcomes do not
+enter threshold selection.
 
 ```{r prs-select-threshold, eval=can_run[['prs']]}
 eligible <- which(is.finite(tuning_results$tuning_r_squared))
@@ -639,12 +635,12 @@ points(selected_threshold$p_threshold, selected_threshold$tuning_r_squared,
 
 ### Evaluate the selected score in the validation samples
 
-The original analysis reports the $R^2$ from `lm(y ~ score)` fitted within the
-validation samples. We reproduce that association measure. The threshold and
-variant weights are fixed before this step, but the regression intercept and
-slope are estimated in the validation samples. Thus this is not a measure of
-calibration or prediction error for an outcome model fitted entirely in the
-tuning samples.
+Evaluate the association between the selected score and the outcome using
+$R^2$ from `lm(y ~ score)` fitted within the validation samples. The threshold
+and variant weights are fixed before this step, but the regression intercept
+and slope are estimated in the validation samples. Thus this is not a measure
+of calibration or prediction error for an outcome model fitted entirely in
+the tuning samples.
 
 ```{r prs-validation, eval=can_run[['prs']]}
 selected_scores <- prs_align_scores(
@@ -684,11 +680,6 @@ writeLines(capture.output(sessionInfo()), file.path(run_dir, "sessionInfo.txt"))
 knitr::kable(final_status[, c("section", "status")])
 cat("Results directory:", run_dir, "\n")
 ```
-
-The [conversion notes](CONVERSION_NOTES.md) map these sections to the original
-notebook and describe corrections to its paths, sample matching, and explanatory
-text. The statistical models, input datasets, filtering thresholds, and tuning
-partition are retained.
 
 ```{r session-information, echo=FALSE}
 sessionInfo()
