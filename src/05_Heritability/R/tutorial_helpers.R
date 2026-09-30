@@ -1,4 +1,4 @@
-# Supporting functions for 05_Heritability_PRS.Rmd.
+# Supporting functions for 05_Heritability.Rmd.
 
 required_inputs <- function(data_dir, phenotype_path) {
   bed_files <- function(prefix) paste0(file.path(data_dir, prefix), c(".bed", ".bim", ".fam"))
@@ -13,9 +13,7 @@ required_inputs <- function(data_dir, phenotype_path) {
     sldsc = c(chromosome_files("1000G_Phase3_baselineLD_ldscores/baselineLD.",
                              c(".l2.ldscore.gz", ".l2.M_5_50", ".annot.gz")),
               chromosome_files("1000G_Phase3_weights_hm3_no_MHC/weights.hm3_noMHC.", ".l2.ldscore.gz"),
-              chromosome_files("1000G_Phase3_frq/1000G.EUR.QC.", ".frq")),
-    prs = c(bed_files("1kg_eur_22/chr_22"), bed_files("prs_genotype/chr22_test"),
-            file.path(data_dir, c("EUR_sum_data", "y_out")))
+              chromosome_files("1000G_Phase3_frq/1000G.EUR.QC.", ".frq"))
   )
 }
 
@@ -112,7 +110,7 @@ initialize_tutorial <- function(params, project_dir) {
   }
   phenotype_path <- normalizePath(phenotype_path, mustWork = FALSE)
   requested <- c(gcta = params$run_gcta, ldsc = params$run_ldsc,
-                 sldsc = params$run_sldsc, prs = params$run_prs)
+                 sldsc = params$run_sldsc)
   if (requested[["sldsc"]] && !requested[["ldsc"]]) {
     stop("run_sldsc = TRUE requires run_ldsc = TRUE to prepare the overall summary statistics.")
   }
@@ -139,7 +137,7 @@ initialize_tutorial <- function(params, project_dir) {
   utils::write.csv(inventory, file.path(run_dir, "input_inventory.csv"), row.names = FALSE)
 
   if (!params$tool_mode %in% c("biowulf_modules", "path")) stop("Unknown tool_mode.")
-  tool_paths <- c(gcta = params$gcta_bin, plink = params$plink_bin, plink2 = params$plink2_bin)
+  tool_paths <- c(gcta = params$gcta_bin)
   ldsc_dir <- path.expand(params$ldsc_dir)
   python <- params$ldsc_python
   if (params$tool_mode == "biowulf_modules") {
@@ -150,10 +148,9 @@ initialize_tutorial <- function(params, project_dir) {
     python <- resolve_executable(python)
     ldsc_launcher <- python
   }
-  tool_ok <- setNames(rep(FALSE, 4L), c("gcta", "plink", "plink2", "ldsc"))
+  tool_ok <- setNames(rep(FALSE, 2L), c("gcta", "ldsc"))
   if (execute) {
-    needed <- c(gcta = requested[["gcta"]], plink = requested[["prs"]],
-                plink2 = requested[["prs"]], ldsc = requested[["ldsc"]])
+    needed <- c(gcta = requested[["gcta"]], ldsc = requested[["ldsc"]])
     for (name in names(tool_ok)[needed]) {
       if (params$tool_mode == "biowulf_modules") {
         executable <- if (name == "ldsc") ldsc_launcher else tool_paths[[name]]
@@ -171,7 +168,7 @@ initialize_tutorial <- function(params, project_dir) {
     }
   }
   section_tools <- c(gcta = tool_ok[["gcta"]], ldsc = tool_ok[["ldsc"]],
-                     sldsc = tool_ok[["ldsc"]], prs = all(tool_ok[c("plink", "plink2")]))
+                     sldsc = tool_ok[["ldsc"]])
   ready <- vapply(names(requested), function(s) all(inventory$readable[inventory$section == s]), logical(1))
   can_run <- execute & requested & ready & section_tools
   can_run[["sldsc"]] <- can_run[["sldsc"]] && can_run[["ldsc"]]
