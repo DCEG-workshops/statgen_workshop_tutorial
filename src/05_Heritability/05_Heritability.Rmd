@@ -69,17 +69,47 @@ annotation enrichment. The analyses use GCTA/GREML, LD Score regression,
 genetic correlation, and stratified LD Score regression. R runs the command-line
 programs and summarizes their results.
 
-Open `05_Heritability.Rmd` in **Biowulf OnDemand RStudio**. Keep the `R/`
-and `scripts/` folders beside this file. Use a compute allocation with at least
+Start **Biowulf OnDemand RStudio** with a compute allocation of at least
 2 CPUs; 16 GB RAM is a suggested starting request. Runtime and memory use have
 not yet been measured on the intended allocation. The R packages `data.table`,
 `knitr`, and `rmarkdown` must be installed before class. The supplied scripts
 load Biowulf's GCTA and LDSC modules separately for each command.
 
+### Clone and open your own copy
+
+In RStudio, open the **Terminal** tab and run the commands below. These are
+shell commands, so enter them in the Terminal rather than the R Console.
+Clone the repository into a folder you own; this example uses
+`/data/$USER/Stats_Gen/workshop5`, where `$USER` expands to your Biowulf username.
+You can substitute another writable folder of your own.
+
+```bash
+mkdir -p "/data/$USER/Stats_Gen/workshop5"
+cd "/data/$USER/Stats_Gen/workshop5"
+git clone https://github.com/DCEG-workshops/statgen_workshop_tutorial.git
+cd statgen_workshop_tutorial/src/05_Heritability
+pwd
+```
+
+In RStudio, select **File > Open File...** and open `05_Heritability.Rmd`
+from the folder printed by `pwd`. With the example above, the full path is:
+
+```text
+/data/<username>/Stats_Gen/workshop5/statgen_workshop_tutorial/src/05_Heritability/05_Heritability.Rmd
+```
+
+Replace `<username>` with your Biowulf username. Keep the `R/` and `scripts/`
+folders beside the Rmd file; cloning the repository includes both. If you
+already cloned the repository into your own folder, open the Rmd from that
+copy instead of cloning again.
+
+### Run the tutorial
+
 Use **Knit** to run the document and generate an HTML report. To run individual
 chunks, first select **Session > Set Working Directory > To Source File Location**
-in RStudio, then run the setup chunk and the subsequent chunks in order. You
-can also render the document from its containing directory:
+in RStudio, then run the setup chunk and the subsequent chunks in order.
+The Terminal's `cd` command does not change the R session's working directory.
+You can also render the document from its containing directory:
 
 ```r
 rmarkdown::render("05_Heritability.Rmd")
