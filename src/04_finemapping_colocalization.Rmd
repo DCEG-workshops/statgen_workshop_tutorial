@@ -1,0 +1,705 @@
+---
+title: "Fine Mapping and Colocalization Lab"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+student: "Your Name"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = TRUE,
+                     fig.width = 9, fig.height = 5, dpi = 120,
+                     fig.align = "center", error = FALSE)
+set.seed(2026)
+options(knitr.table.format = "pipe")
+```
+
+# Setup
+
+Run the chunks in order or knit the document in Biowulf RStudio.
+The main lab covers SuSiE and colocalization; TERT and prior sensitivity
+are optional extensions. Install missing packages before knitting.
+
+```{r install-packages, eval=FALSE}
+install.packages(c("susieR", "coloc", "knitr", "rmarkdown"))
+```
+
+## Data and output directories
+
+Replace `YOUR_USERNAME` with your Biowulf username. Edit either path as
+needed; inputs are read only and results go to `analysis_dir`.
+
+```{r set-directories}
+username <- Sys.getenv("USER")
+
+# Create Stats_Gen/workshop4 (recursive = TRUE makes Stats_Gen too if needed)
+workshop_dir <- file.path("/vf/users", username, "Stats_Gen", "workshop4")
+dir.create(workshop_dir, recursive = TRUE, showWarnings = FALSE)
+
+input_dir <- "/data/DCEG_shared/statgen_workshop_2026/data/workshop4"
+analysis_dir <- normalizePath(workshop_dir)
+
+```
+
+load packages
+
+```{r paths-and-packages}
+needed <- c("susieR", "coloc", "knitr", "rmarkdown")
+missing_packages <- needed[!vapply(needed, requireNamespace, logical(1),
+                                  quietly = TRUE)]
+if (length(missing_packages)) {
+  stop("Install these packages before continuing: ",
+       paste(missing_packages, collapse = ", "))
+}
+library(susieR)
+library(coloc)
+
+input_dir <- normalizePath(path.expand(input_dir), mustWork = TRUE)
+analysis_dir <- path.expand(analysis_dir)
+dir.create(analysis_dir, recursive = TRUE, showWarnings = FALSE)
+if (!dir.exists(analysis_dir) || file.access(analysis_dir, 2) != 0) {
+  stop("Cannot write to analysis_dir: ", analysis_dir,
+       ". Edit analysis_dir in the set-directories chunk.")
+}
+analysis_dir <- normalizePath(analysis_dir, mustWork = TRUE)
+cat("Input directory:", input_dir, "\nOutput directory:", analysis_dir, "\n")
+
+# Accept the local filenames and the corresponding names in the old notebook.
+choose_file <- function(candidates) {
+  paths <- file.path(input_dir, candidates)
+  found <- paths[file.exists(paths)]
+  if (!length(found)) stop("Missing input: ", paste(candidates, collapse = " OR "))
+  found[1]
+}
+files <- c(
+  fgfr2_stats = choose_file(c("FGFR2_sumstat.txt", "example_1_sumstat.txt")),
+  fgfr2_ld = choose_file(c("FGFR2_LD.ld.bin", "example_1_LD.ld.bin")),
+  tissue1 = choose_file(c("gene_expression_T1.txt", "gene_expression_tissue1.txt")),
+  tissue2 = choose_file(c("gene_expression_T2.txt", "gene_expression_tissue2.txt")),
+  tert_stats = choose_file(c("example_2_sumstat.txt", "TERT_sumstat.txt")),
+  tert_ld = choose_file(c("TERT_LD.ld.bin", "example_2_LD.ld.bin"))
+)
+manifest <- data.frame(role = names(files), file = basename(files),
+                       md5 = unname(tools::md5sum(files)))
+knitr::kable(manifest[, c("role", "file")], row.names = FALSE)
+```
+
+
+## Plotting and data-check helpers
+
+Run these helpers only once before the analyses.
+
+```{r helpers}
+check_stats <- function(d) {
+  if (anyNA(d$snp) || any(!nzchar(d$snp)) || anyDuplicated(d$snp))
+    stop("Variant identifiers must be present and unique.")
+  for (v in c("chr", "pos", "beta", "se", "p"))
+    if (any(!is.finite(d[[v]]))) stop("Non-finite values in column: ", v)
+  if (any(d$se <= 0) || any(d$p <= 0 | d$p > 1))
+    stop("SE must be positive and p-values must lie in (0,1].")
+  if (length(unique(d$chr)) != 1L) stop("Use one genomic region at a time.")
+  invisible(TRUE)
+}
+
+read_ld <- function(path, d, prefix) {
+  p <- nrow(d)
+  if (file.info(path)$size != 4 * as.double(p)^2)
+    stop("Binary LD size does not match the number of summary-statistic rows.")
+  con <- file(path, "rb")
+  on.exit(close(con))
+  R <- matrix(readBin(con, what = "numeric", n = p * p, size = 4,
+                      endian = "little"), nrow = p, byrow = TRUE)
+
+  # Remove undefined diagonals first, then both endpoints of any remaining
+  # undefined pair. Never replace unknown correlations with independence (0).
+  bad_diagonal <- which(!is.finite(diag(R)))
+  keep <- setdiff(seq_len(p), bad_diagonal)
+  bad_pair <- keep[rowSums(!is.finite(R[keep, keep, drop = FALSE])) > 0]
+  excluded <- c(bad_diagonal, bad_pair)
+  exclusions <- data.frame(
+    snp = d$snp[excluded], original_row = excluded,
+    reason = c(rep("undefined diagonal", length(bad_diagonal)),
+               rep("undefined pairwise LD", length(bad_pair)))
+  )
+  keep <- setdiff(keep, bad_pair)
+  if (length(keep) < 2) stop("Too few variants with complete LD.")
+  R <- R[keep, keep, drop = FALSE]
+  if (any(!is.finite(R)) || max(abs(R - t(R))) > 1e-5 ||
+      max(abs(diag(R) - 1)) > 1e-5 || max(abs(R)) > 1 + 1e-5)
+    stop("LD must be a finite, symmetric correlation matrix with diagonal 1.")
+  cat(prefix, ": retained ", length(keep), " of ", p, " variants; excluded ",
+      length(bad_diagonal), " with undefined diagonal and ", length(bad_pair),
+      " with remaining undefined pairwise LD.\n", sep = "")
+  write.csv(exclusions, file.path(analysis_dir, paste0(prefix, "_excluded.csv")),
+            row.names = FALSE)
+  list(stats = d[keep, , drop = FALSE], R = R, excluded = exclusions)
+}
+
+##Locuszoom style
+
+regional_plot <- function(d, R, title, lead = which.min(d$p), neglog10p = -log10(d$p)) {
+  r2 <- pmin(1, pmax(0, R[, lead]^2))  # square r once, not twice
+  pal <- c("grey75", "#56B4E9", "#009E73", "#E69F00", "#D55E00")
+  bins <- cut(r2, breaks = seq(0, 1, 0.2), include.lowest = TRUE, labels = FALSE)
+  plot(d$pos / 1e6, neglog10p, pch = 16, cex = 0.65, col = pal[bins],
+       xlab = paste("Chromosome", unique(d$chr), "position (Mb)"),
+       ylab = expression(-log[10](p)), main = title,
+       ylim = c(0, max(neglog10p) * 1.25), bty = "l")
+  points(d$pos[lead] / 1e6, neglog10p[lead], pch = 18, cex = 1.3,
+         col = "#882255")
+  legend("topright", c("0-0.2", "0.2-0.4", "0.4-0.6", "0.6-0.8", "0.8-1", "Lead SNP"),
+         col = c(pal, "#882255"), pch = c(rep(16, 5), 18), bty = "n",
+         title = expression(r^2~"with GWAS lead"), cex = 0.8, ncol = 3)
+}
+
+cs_membership <- function(fit) {
+  cs <- fit$sets$cs
+  vapply(seq_along(fit$pip), function(j) {
+    hit <- names(cs)[vapply(cs, function(s) j %in% s, logical(1))]
+    if (length(hit)) paste(hit, collapse = "+") else "None"
+  }, character(1))
+}
+
+cs_summary <- function(fit, R) {
+  cs <- fit$sets$cs
+  if (!length(cs)) return(data.frame())
+  do.call(rbind, lapply(seq_along(cs), function(i) {
+    j <- cs[[i]]
+    effect <- fit$sets$cs_index[i]
+    data.frame(CS = names(cs)[i], n_variants = length(j),
+               posterior_mass = sum(fit$alpha[effect, j]),
+               min_abs_r = min(abs(R[j, j, drop = FALSE])))
+  }))
+}
+
+cs_members <- function(fit, d) {
+  cs <- fit$sets$cs
+  if (!length(cs)) return(data.frame())
+  do.call(rbind, lapply(seq_along(cs), function(i) {
+    j <- cs[[i]]
+    effect <- fit$sets$cs_index[i]
+    out <- data.frame(CS = names(cs)[i], d[j, c("snp", "pos", "p")],
+                      component_probability = fit$alpha[effect, j], PIP = fit$pip[j])
+    out[order(out$component_probability, decreasing = TRUE), ]
+  }))
+}
+
+finemap_plot <- function(d, fit, title, association = FALSE) {
+  membership <- cs_membership(fit)
+  cs_names <- names(fit$sets$cs)
+  palette <- setNames(grDevices::hcl.colors(max(1, length(cs_names)), "Dark 3")
+                      [seq_along(cs_names)], cs_names)
+  colors <- rep("grey75", nrow(d))
+  for (nm in cs_names) colors[membership == nm] <- palette[nm]
+  overlap <- grepl("+", membership, fixed = TRUE)
+  colors[overlap] <- "black"
+  y <- if (association) -log10(d$p) else fit$pip
+  plot(d$pos / 1e6, y, col = colors, pch = 16, cex = 0.7,
+       xlab = paste("Chromosome", unique(d$chr), "position (Mb)"),
+       ylab = if (association) expression(-log[10](p)) else "Posterior inclusion probability",
+       main = title, ylim = if (association) c(0, max(y) * 1.2) else c(0, 1), bty = "l")
+  lead <- which.min(d$p)
+  points(d$pos[lead] / 1e6, y[lead], pch = 18, cex = 1.4, col = colors[lead])
+  legend("topright", c(paste("CS", cs_names), "Outside reported CSs",
+                       if (any(overlap)) "In multiple CSs"),
+         col = c(unname(palette), "grey75", if (any(overlap)) "black"),
+         pch = 16, bty = "n", cex = 0.8)
+}
+```
+
+# Part 1 — Single-ancestry fine mapping with SuSiE
+
+## 1.1 Regional GWAS summary statistics
+
+```{r fgfr2-summary-statistics}
+fgfr2_raw <- read.table(files["fgfr2_stats"], header = TRUE, stringsAsFactors = FALSE)
+fgfr2 <- data.frame(snp = fgfr2_raw$SNPID, chr = fgfr2_raw$CHR,
+                    pos = fgfr2_raw$POS, beta = fgfr2_raw$BETA,
+                    se = fgfr2_raw$SE, p = fgfr2_raw$p.value)
+check_stats(fgfr2)
+n_fgfr2 <- unique(fgfr2_raw$N)
+stopifnot(length(n_fgfr2) == 1L, is.finite(n_fgfr2), n_fgfr2 > 1)
+head(fgfr2[order(fgfr2$p), ], 6)
+```
+
+## 1.2 Add LD
+
+```{r fgfr2-read-ld}
+fgfr2_input <- read_ld(files["fgfr2_ld"], fgfr2, "FGFR2")
+fgfr2 <- fgfr2_input$stats
+R_fgfr2 <- fgfr2_input$R
+round(R_fgfr2[1:6, 1:6], 3)
+```
+
+## 1.3 Regional association plot
+
+
+```{r fgfr2-regional-plot}
+regional_plot(fgfr2, R_fgfr2, "FGFR2 region: marginal GWAS associations")
+```
+
+## 1.4 Run SuSiE
+
+```{r fgfr2-susie}
+fit_fgfr2 <- susieR::susie_rss(
+  bhat = fgfr2$beta, shat = fgfr2$se, R = R_fgfr2, n = n_fgfr2,
+  L = 10, coverage = 0.95, min_abs_corr = 0.5,
+  estimate_residual_variance = FALSE, max_iter = 200
+)
+if (!isTRUE(fit_fgfr2$converged)) stop("FGFR2 SuSiE fit did not converge.")
+summary(fit_fgfr2)
+```
+
+## 1.5 PIPs and credible sets
+
+- **PIP:** probability a SNP is included in at least one modeled effect.
+- **95% credible set:** SNPs accumulating at least 95% probability for one effect.
+- **Purity:** within-set LD consistency.
+
+```{r fgfr2-pips-and-cs}
+fgfr2$PIP <- fit_fgfr2$pip
+fgfr2$CS <- cs_membership(fit_fgfr2)
+top_fgfr2 <- head(fgfr2[order(fgfr2$PIP, decreasing = TRUE),
+                       c("snp", "pos", "p", "PIP", "CS")], 10)
+top_fgfr2$p <- formatC(top_fgfr2$p, format = "e", digits = 2)
+knitr::kable(top_fgfr2, row.names = FALSE, digits = 3)
+knitr::kable(cs_summary(fit_fgfr2, R_fgfr2), digits = 3, row.names = FALSE)
+```
+
+Construct a credible set by ranking one component's `alpha` values and cumulating to 0.95. We need to use component probabilities, rather than overall PIPs, for signal-specific sets.
+
+```{r fgfr2-build-credible-set, results='asis'}
+if (length(fit_fgfr2$sets$cs)) {
+  effect <- fit_fgfr2$sets$cs_index[1]
+  alpha <- fit_fgfr2$alpha[effect, ]
+  ranked <- order(alpha, decreasing = TRUE)
+  cumulative <- cumsum(alpha[ranked])
+  k <- which(cumulative >= 0.95)[1]
+  chosen <- ranked[seq_len(k)]
+  print(knitr::kable(data.frame(
+    snp = fgfr2$snp[chosen], component_probability = alpha[chosen],
+    cumulative_probability = cumulative[seq_len(k)], PIP = fit_fgfr2$pip[chosen]
+  ), digits = 3, row.names = FALSE))
+  stopifnot(setequal(chosen, fit_fgfr2$sets$cs[[1]]))
+} else {
+  cat("No credible set passed the reporting filters for this fit.")
+}
+```
+
+```{r fgfr2-pip-plot}
+finemap_plot(fgfr2, fit_fgfr2, "FGFR2 region: posterior inclusion probabilities")
+```
+
+```{r fgfr2-cs-association-plot}
+finemap_plot(fgfr2, fit_fgfr2, "FGFR2 region: credible sets on the GWAS plot",
+             association = TRUE)
+```
+
+
+## Extension — Multiple signals at TERT
+
+### 1.6 Prepare TERT
+
+```{r tert-inputs}
+tert_raw <- read.table(files["tert_stats"], header = TRUE, stringsAsFactors = FALSE)
+tert <- data.frame(snp = tert_raw$rsid, chr = tert_raw$CHR,
+                   pos = tert_raw$POS, beta = tert_raw$beta,
+                   se = tert_raw$standard_error, p = tert_raw$p.value)
+check_stats(tert)
+tert_input <- read_ld(files["tert_ld"], tert, "TERT")
+tert <- tert_input$stats
+R_tert <- tert_input$R
+head(tert[order(tert$p), ], 6)
+```
+
+```{r tert-regional-plot}
+regional_plot(tert, R_tert, "TERT region: marginal GWAS associations")
+```
+
+### 1.7 Fit multiple effects
+
+```{r tert-susie}
+fit_tert <- susieR::susie_rss(
+  bhat = tert$beta, shat = tert$se, R = R_tert,
+  L = 10, coverage = 0.95, min_abs_corr = 0.5,
+  estimate_residual_variance = FALSE, max_iter = 200
+)
+if (!isTRUE(fit_tert$converged)) stop("TERT SuSiE fit did not converge.")
+tert$PIP <- fit_tert$pip
+tert$CS <- cs_membership(fit_tert)
+knitr::kable(cs_summary(fit_tert, R_tert), digits = 3, row.names = FALSE)
+tert_members_display <- cs_members(fit_tert, tert)
+if (nrow(tert_members_display))
+  tert_members_display$p <- formatC(tert_members_display$p, format = "e", digits = 2)
+knitr::kable(tert_members_display, digits = 4, row.names = FALSE)
+```
+
+```{r tert-pip-plot}
+finemap_plot(tert, fit_tert, "TERT region: signal-specific credible sets")
+```
+
+```{r tert-cs-association-plot}
+finemap_plot(tert, fit_tert, "TERT region: credible sets on the GWAS plot",
+             association = TRUE)
+```
+
+### 1.8 Compare LD within and between sets
+
+Within-set mean \(r^2\) excludes the diagonal. The heatmap displays candidate
+correlations, not biological causality.
+
+```{r tert-credible-set-ld}
+cs_tert <- fit_tert$sets$cs
+if (length(cs_tert)) {
+  comparisons <- expand.grid(set_a = names(cs_tert), set_b = names(cs_tert),
+                              stringsAsFactors = FALSE)
+  comparisons$mean_r2 <- mapply(function(a, b) {
+    block <- R_tert[cs_tert[[a]], cs_tert[[b]], drop = FALSE]^2
+    values <- if (a == b) block[upper.tri(block)] else as.vector(block)
+    if (length(values)) mean(values) else NA_real_
+  }, comparisons$set_a, comparisons$set_b)
+  knitr::kable(comparisons, digits = 3, row.names = FALSE)
+} else {
+  cat("No credible sets passed the reporting filters.")
+}
+```
+
+```{r tert-ld-heatmap, fig.height=7}
+if (length(cs_tert)) local({
+  ids <- unique(unlist(cs_tert, use.names = FALSE))
+  # Keep the figure legible if a future package version returns larger sets.
+  if (length(ids) > 40) {
+    ids <- ids[order(fit_tert$pip[ids], decreasing = TRUE)[1:40]]
+    cat("Heatmap restricted to the 40 highest-PIP credible-set variants.\n")
+  }
+  labels <- paste(tert$snp[ids], tert$CS[ids], sep = " / ")
+  m <- length(ids)
+  old <- par(mar = c(9, 9, 3, 1))
+  on.exit(par(old))
+  image(seq_len(m), seq_len(m), R_tert[ids, ids, drop = FALSE]^2,
+        col = colorRampPalette(c("white", "#0072B2", "#082567"))(100),
+        zlim = c(0, 1), axes = FALSE, xlab = "", ylab = "",
+        main = expression("TERT credible-set variants: " * r^2))
+  axis(1, at = seq_len(m), labels = labels, las = 2, cex.axis = 0.7)
+  axis(2, at = seq_len(m), labels = labels, las = 2, cex.axis = 0.7)
+  box()
+  mtext("White = 0; dark blue = 1", side = 3, line = 0.25, cex = 0.8)
+})
+```
+
+# Part 2 — Colocalization
+
+## 2.1 Hypotheses
+
+`coloc.abf()` assumes at most one causal variant per trait in the region.
+
+| Hypothesis | Explanation |
+|:--|:--|
+| H0 | Neither trait associated. |
+| H1 | GWAS only. |
+| H2 | Expression only. |
+| H3 | Both associated; distinct causal variants. |
+| H4 | Both associated; shared causal variant. |
+
+Sharing does not establish mediation through expression.
+
+## 2.2 Align tissue datasets
+
+Match all shared regional SNPs by ID and position; do not filter by
+significance or restrict to the GWAS credible set.
+
+```{r read-and-align-tissues}
+tissue1 <- read.table(files["tissue1"], header = TRUE, stringsAsFactors = FALSE)
+tissue2 <- read.table(files["tissue2"], header = TRUE, stringsAsFactors = FALSE)
+
+align_tissue <- function(gwas, eqtl, label) {
+  if (anyNA(eqtl$rsid) || anyDuplicated(eqtl$rsid) || any(!nzchar(eqtl$rsid)))
+    stop("Missing or duplicated eQTL variant IDs.")
+  ids <- gwas$snp[gwas$snp %in% eqtl$rsid]
+  if (length(ids) < 2) stop("Too few shared variants.")
+  g <- gwas[match(ids, gwas$snp), , drop = FALSE]
+  q <- eqtl[match(ids, eqtl$rsid), , drop = FALSE]
+  stopifnot(identical(g$snp, q$rsid), all(g$pos == q$pos), all(g$chr == q$chr))
+  maf <- pmin(q$effect_allele_frequency, 1 - q$effect_allele_frequency)
+  if (any(!is.finite(q$p.value)) || any(q$p.value <= 0 | q$p.value > 1) ||
+      any(!is.finite(maf)) || any(maf <= 0 | maf > 0.5))
+    stop("Invalid eQTL p-values or allele frequencies.")
+  cat(label, ": ", length(ids), " shared variants; ",
+      nrow(gwas) - length(ids), " GWAS-only and ", nrow(eqtl) - length(ids),
+      " eQTL-only variants excluded.\n", sep = "")
+  list(gwas = g, eqtl = q, maf = maf)
+}
+pair1 <- align_tissue(fgfr2, tissue1, "Tissue 1")
+pair2 <- align_tissue(fgfr2, tissue2, "Tissue 2")
+head(tissue1)
+```
+
+## 2.3 Run coloc
+
+GWAS inputs are log odds ratios and `SE^2` (`type = "cc"`).
+eQTL inputs are p-values, MAF, and sample size (`type = "quant"`).
+This single-variant Bayes-factor approach does not require LD.
+`p1`, `p2`, and `p12` are per-SNP priors for each trait and for sharing.
+
+```{r coloc-inputs}
+make_coloc_data <- function(pair, n_eqtl) {
+  list(
+    gwas = list(beta = pair$gwas$beta, varbeta = pair$gwas$se^2,
+                snp = pair$gwas$snp, position = pair$gwas$pos, type = "cc"),
+    eqtl = list(pvalues = pair$eqtl$p.value, MAF = pair$maf, N = n_eqtl,
+                snp = pair$eqtl$rsid, position = pair$eqtl$pos, type = "quant")
+  )
+}
+data1 <- make_coloc_data(pair1, n_eqtl = 670)
+data2 <- make_coloc_data(pair2, n_eqtl = 300)
+for (d in list(data1$gwas, data1$eqtl, data2$gwas, data2$eqtl)) {
+  coloc::check_dataset(d)
+}
+priors <- c(p1 = 1e-4, p2 = 1e-4, p12 = 1e-5)
+```
+
+```{r coloc-run}
+coloc_t1 <- coloc::coloc.abf(data1$gwas, data1$eqtl,
+                            p1 = priors["p1"], p2 = priors["p2"], p12 = priors["p12"])
+coloc_t2 <- coloc::coloc.abf(data2$gwas, data2$eqtl,
+                            p1 = priors["p1"], p2 = priors["p2"], p12 = priors["p12"])
+```
+
+```{r coloc-posterior-table}
+posterior <- rbind("Tissue 1" = coloc_t1$summary, "Tissue 2" = coloc_t2$summary)
+knitr::kable(posterior, digits = 4)
+```
+
+## 2.4 Regional plots
+
+### Three-panel overview
+
+GWAS and both tissues share the same x-axis. The dashed line marks the
+GWAS lead; overlapping peaks alone do not establish colocalization.
+
+```{r coloc-overview-helper}
+plot_coloc_overview <- function() {
+  old <- par(mfrow = c(3, 1), mar = c(2.7, 4.4, 2.5, 1),
+             oma = c(2.3, 0, 2.2, 0), mgp = c(2.3, 0.7, 0))
+  on.exit(par(old))
+  lead <- which.min(fgfr2$p)
+  lead_pos <- fgfr2$pos[lead] / 1e6
+  panels <- list(
+    list(pos = fgfr2$pos, p = fgfr2$p, title = "Disease GWAS", color = "#555555"),
+    list(pos = pair1$eqtl$pos, p = pair1$eqtl$p.value,
+         title = "Tissue 1 expression", color = "#0072B2"),
+    list(pos = pair2$eqtl$pos, p = pair2$eqtl$p.value,
+         title = "Tissue 2 expression", color = "#009E73")
+  )
+  for (d in panels) {
+    plot(d$pos / 1e6, -log10(d$p), xlim = range(fgfr2$pos) / 1e6,
+         xlab = "", ylab = expression(-log[10](p)),
+         pch = 16, cex = 0.55, col = d$color, main = d$title, bty = "l")
+    abline(v = lead_pos, lty = 2, col = "#882255")
+  }
+  mtext("Chromosome 10 position (Mb)", side = 1, outer = TRUE, line = 0.5)
+  mtext(paste("Dashed line: GWAS lead", fgfr2$snp[lead]),
+        side = 3, outer = TRUE, line = 0.5, cex = 0.85)
+}
+```
+
+```{r coloc-three-panel-overview, fig.width=9, fig.height=9}
+plot_coloc_overview()
+```
+
+### LD-colored comparisons
+
+Colors use the same EAS-reference LD with the GWAS lead in every panel;
+eQTL-cohort LD is unavailable. Diamonds mark the GWAS lead and squares the
+eQTL lead. Each figure shows the full region and a zoom, with separate
+y-scales for GWAS and expression.
+
+```{r coloc-plot-data}
+make_coloc_plot_data <- function(pair) {
+  # Match LD rows to the aligned SNP IDs, not to their current row numbers.
+  ld_rows <- match(pair$gwas$snp, fgfr2$snp)
+  stopifnot(!anyNA(ld_rows), identical(pair$gwas$snp, pair$eqtl$rsid))
+  gwas_lead <- which.min(pair$gwas$p)
+  data.frame(
+    snp = pair$gwas$snp, pos = pair$gwas$pos,
+    p_gwas = pair$gwas$p, p_eqtl = pair$eqtl$p.value,
+    r2_gwas_lead = pmin(1, pmax(0, R_fgfr2[ld_rows, ld_rows[gwas_lead]]^2))
+  )
+}
+coloc_plot_data <- list("Tissue 1" = make_coloc_plot_data(pair1),
+                       "Tissue 2" = make_coloc_plot_data(pair2))
+
+lead_comparison <- do.call(rbind, lapply(names(coloc_plot_data), function(tissue) {
+  d <- coloc_plot_data[[tissue]]
+  leads <- c(which.min(d$p_gwas), which.min(d$p_eqtl))
+  data.frame(tissue = tissue, lead_for = c("GWAS", "eQTL"),
+             d[leads, ], row.names = NULL)
+}))
+lead_display <- lead_comparison
+lead_display$p_gwas <- formatC(lead_display$p_gwas, format = "e", digits = 2)
+lead_display$p_eqtl <- formatC(lead_display$p_eqtl, format = "e", digits = 2)
+knitr::kable(lead_display, digits = 3, row.names = FALSE)
+```
+
+```{r coloc-plot-helper}
+plot_coloc_ld <- function(d, tissue, coloc_summary, zoom_flank = 5000) {
+  old <- par(no.readonly = TRUE)
+  on.exit(par(old))
+  layout(matrix(c(1, 2, 3, 4, 5, 5), nrow = 3, byrow = TRUE),
+         heights = c(1, 1, 0.30))
+  par(oma = c(0, 0, 4, 0), mar = c(3.8, 4.3, 2.5, 0.8), mgp = c(2.4, 0.7, 0))
+
+  g <- which.min(d$p_gwas)
+  q <- which.min(d$p_eqtl)
+  x <- d$pos / 1e6
+  whole <- range(x)
+  zoom <- c(max(whole[1], min(x[c(g, q)]) - zoom_flank / 1e6),
+            min(whole[2], max(x[c(g, q)]) + zoom_flank / 1e6))
+  pal <- c("grey70", "#56B4E9", "#009E73", "#E69F00", "#D55E00")
+  bins <- cut(d$r2_gwas_lead, breaks = seq(0, 1, 0.2),
+              include.lowest = TRUE, labels = FALSE)
+  colors <- pal[bins]
+
+  draw_panel <- function(y, label, limits, closeup) {
+    ymax <- max(y) * 1.42
+    plot(x, y, type = "n", xlim = limits, ylim = c(0, ymax),
+         xlab = "Chromosome 10 position (Mb)", ylab = expression(-log[10](p)),
+         main = paste(label, if (closeup) "| Lead-variant zoom" else "| Full region"),
+         cex.main = 0.95, bty = "l")
+    if (!closeup) rect(zoom[1], 0, zoom[2], ymax, col = "grey94", border = NA)
+    # Draw weak-LD points first so strong-LD candidates remain visible.
+    ord <- order(d$r2_gwas_lead)
+    points(x[ord], y[ord], pch = 16, cex = 0.62, col = colors[ord])
+    abline(v = x[g], lty = 2, col = "#882255")
+    if (q != g) abline(v = x[q], lty = 3, col = "grey25")
+    points(x[g], y[g], pch = 23, bg = "#882255", col = "#882255", cex = 1.3)
+    if (q != g) points(x[q], y[q], pch = 22, bg = colors[q], col = "black", cex = 1.3)
+
+    if (closeup) {
+      label_x <- limits + c(0.02, -0.02) * diff(limits)
+      text(label_x[1], ymax * 0.94, paste("GWAS lead", d$snp[g], sep = "\n"),
+           adj = c(0, 1), cex = 0.8, col = "#882255")
+      text(label_x[2], ymax * 0.94, paste("eQTL lead", d$snp[q], sep = "\n"),
+           adj = c(1, 1), cex = 0.8)
+    }
+  }
+
+  draw_panel(-log10(d$p_gwas), "Disease GWAS", whole, FALSE)
+  draw_panel(-log10(d$p_gwas), "Disease GWAS", zoom, TRUE)
+  draw_panel(-log10(d$p_eqtl), paste(tissue, "eQTL"), whole, FALSE)
+  draw_panel(-log10(d$p_eqtl), paste(tissue, "eQTL"), zoom, TRUE)
+
+  par(mar = c(0, 0, 0, 0))
+  plot.new()
+  legend("top", legend = c("0-0.2", "0.2-0.4", "0.4-0.6", "0.6-0.8", "0.8-1"),
+         col = pal, pch = 16, horiz = TRUE, bty = "n", cex = 0.9,
+         title = paste("Reference LD (r-squared) with GWAS lead", d$snp[g]))
+  legend("bottom", legend = c("GWAS lead", "eQTL lead", "Zoom window in full-region panels"),
+         pch = c(23, 22, 15), pt.bg = c("#882255", colors[q], "grey94"),
+         col = c("#882255", "black", "grey85"), horiz = TRUE, bty = "n", cex = 0.85)
+  mtext(paste(tissue, "vs disease: compare the same variants"),
+        side = 3, outer = TRUE, line = 2.3, font = 2, cex = 1.15)
+  mtext(sprintf("Lead-SNP r-squared = %.3f   |   H3 (distinct) = %.3f   |   H4 (shared) = %.3f",
+                d$r2_gwas_lead[q], coloc_summary["PP.H3.abf"], coloc_summary["PP.H4.abf"]),
+        side = 3, outer = TRUE, line = 0.8, cex = 0.9)
+}
+```
+
+```{r coloc-tissue1-ld, fig.width=11, fig.height=8}
+plot_coloc_ld(coloc_plot_data[["Tissue 1"]], "Tissue 1", coloc_t1$summary)
+```
+
+**Tissue 1:** leads rs2912781 and rs2981579 have reference r-squared 0.606.
+The SNP-level evidence favors distinct variants (H3 = 0.958).
+
+```{r coloc-tissue2-ld, fig.width=11, fig.height=8}
+plot_coloc_ld(coloc_plot_data[["Tissue 2"]], "Tissue 2", coloc_t2$summary)
+```
+
+**Tissue 2:** leads rs2912781 and rs2912778 have reference r-squared 0.954.
+Sharing is favored (H4 = 0.991): different lead SNPs can tag a shared signal.
+
+## 2.5 Shared-variant probabilities
+
+`SNP.PP.H4` is conditional on H4, not an unconditional shared-causality
+probability or a SuSiE PIP.
+
+```{r coloc-shared-variant-table}
+shared_variants <- coloc_t2$results[
+  order(coloc_t2$results$SNP.PP.H4, decreasing = TRUE), c("snp", "SNP.PP.H4")]
+knitr::kable(head(shared_variants, 10), digits = 3, row.names = FALSE)
+```
+
+## Optional: prior sensitivity
+
+Vary `p12` while holding the data, `p1`, and `p2` fixed.
+
+```{r coloc-prior-sensitivity, results='hide'}
+sensitivity_results <- do.call(rbind, lapply(c(1e-6, 1e-5, 5e-5), function(p12) {
+  do.call(rbind, lapply(seq_along(list(data1, data2)), function(i) {
+    d <- list(data1, data2)[[i]]
+    x <- coloc::coloc.abf(d$gwas, d$eqtl, p1 = priors["p1"],
+                          p2 = priors["p2"], p12 = p12)$summary
+    data.frame(tissue = paste("Tissue", i), p12 = p12,
+               H3 = unname(x["PP.H3.abf"]), H4 = unname(x["PP.H4.abf"]))
+  }))
+}))
+```
+
+```{r coloc-prior-sensitivity-table}
+knitr::kable(sensitivity_results, digits = c(0, 6, 4, 4), row.names = FALSE)
+```
+
+
+# Save results
+
+Write result tables, fitted objects, input checksums, session information,
+and all three colocalization figures to `analysis_dir`.
+
+```{r save-results}
+write.csv(fgfr2, file.path(analysis_dir, "FGFR2_variant_results.csv"), row.names = FALSE)
+write.csv(tert, file.path(analysis_dir, "TERT_variant_results.csv"), row.names = FALSE)
+write.csv(cs_summary(fit_fgfr2, R_fgfr2),
+          file.path(analysis_dir, "FGFR2_credible_sets.csv"), row.names = FALSE)
+write.csv(cs_summary(fit_tert, R_tert),
+          file.path(analysis_dir, "TERT_credible_sets.csv"), row.names = FALSE)
+write.csv(cs_members(fit_fgfr2, fgfr2),
+          file.path(analysis_dir, "FGFR2_cs_members.csv"), row.names = FALSE)
+write.csv(cs_members(fit_tert, tert),
+          file.path(analysis_dir, "TERT_cs_members.csv"), row.names = FALSE)
+write.csv(data.frame(tissue = rownames(posterior), posterior, row.names = NULL),
+          file.path(analysis_dir, "coloc_posteriors.csv"), row.names = FALSE)
+write.csv(shared_variants, file.path(analysis_dir, "Tissue2_shared_variant_probabilities.csv"),
+          row.names = FALSE)
+write.csv(sensitivity_results, file.path(analysis_dir, "coloc_prior_sensitivity.csv"),
+          row.names = FALSE)
+write.csv(lead_comparison, file.path(analysis_dir, "coloc_lead_comparison.csv"),
+          row.names = FALSE)
+png(file.path(analysis_dir, "coloc_three_panel_overview.png"),
+    width = 1080, height = 1080, res = 120)
+plot_coloc_overview()
+dev.off()
+for (i in seq_along(coloc_plot_data)) {
+  png(file.path(analysis_dir, paste0("coloc_tissue", i, "_LD.png")),
+      width = 1320, height = 960, res = 120)
+  plot_coloc_ld(coloc_plot_data[[i]], names(coloc_plot_data)[i],
+               list(coloc_t1$summary, coloc_t2$summary)[[i]])
+  dev.off()
+}
+saveRDS(list(FGFR2 = fit_fgfr2, TERT = fit_tert, coloc_T1 = coloc_t1,
+             coloc_T2 = coloc_t2, priors = priors, manifest = manifest,
+             coloc_leads = lead_comparison,
+             n_FGFR2 = n_fgfr2, n_eqtl = c(Tissue1 = 670, Tissue2 = 300),
+             TERT_sample_size_assumption = "large n, small effects; n omitted",
+             session = sessionInfo()), file.path(analysis_dir, "practicum_results.rds"))
+writeLines(capture.output(sessionInfo()), file.path(analysis_dir, "sessionInfo.txt"))
+cat("Results saved in:", analysis_dir, "\n")
+```
+
+## R session and package versions
+
+```{r session-info}
+sessionInfo()
+```
