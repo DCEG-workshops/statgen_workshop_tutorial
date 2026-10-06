@@ -1,0 +1,414 @@
+---
+title: "Session 6: Polygenic Risk Scores"
+subtitle: "Clumping and thresholding in RStudio on Biowulf"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: show
+    self_contained: true
+    theme: readable
+params:
+  execute: true
+  data_dir: "/data/DCEG_shared/statgen_workshop_2026/data/workshop6/data/"
+  output_dir: "06_PRS_results"
+  threads: 1
+  memory_mb: 2048
+  clump_r2: 0.1
+  clump_kb: 500
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, warning = TRUE,
+                     message = FALSE, cache = FALSE, eval = params$execute,
+                     fig.width = 7, fig.height = 4.5)
+```
+
+# Overview
+
+This practical introduces polygenic risk scores using chromosome 22 GWAS
+summary statistics, a European 1000 Genomes LD reference, simulated target
+genotypes, and a quantitative outcome.
+
+We will:
+
+1. Use PLINK 1.9 to select approximately independent variants by LD clumping.
+2. Use PLINK 2 to calculate a PRS at nine GWAS p-value thresholds.
+3. Select a threshold using 10,000 tuning samples.
+4. Evaluate the selected score in 10,000 separate validation samples.
+
+For individual \(i\), the score is
+\[
+\mathrm{PRS}_i = \sum_{j \in S} \widehat\beta_j G_{ij},
+\]
+where \(S\) is the selected variant set, \(\widehat\beta_j\) is the GWAS
+coefficient, and \(G_{ij}\) counts copies of the **effect allele A1**.
+This example predicts a quantitative trait, so performance is measured with
+linear-regression \(R^2\).
+
+# Prepare RStudio on Biowulf
+
+Start **RStudio Server through Biowulf OnDemand** on a compute node. Start with
+**2 CPUs, 8 GB RAM, and 1 hour** for this chromosome 22 exercise; request 5 GB
+of local scratch if the launch form allows it. The code defaults to one PLINK
+thread and a 2,048 MB PLINK workspace. Keep these settings within your allocation.
+
+## Get your own copy
+
+In the RStudio **Terminal** tab, clone the workshop into a directory you own:
+
+```bash
+mkdir -p "/data/$USER/Stats_Gen/workshop6"
+cd "/data/$USER/Stats_Gen/workshop6"
+git clone https://github.com/DCEG-workshops/statgen_workshop_tutorial.git
+cd statgen_workshop_tutorial/src
+pwd
+```
+
+If you already have a clone, use that copy. In RStudio, select **File > Open
+File...** and open `06_PRS.Rmd` in the `src` directory printed above. Select
+**Session > Set Working Directory > To Source File Location** before running
+individual chunks. The Terminal's `cd` command does not change R's working
+directory. Run the chunks in order, or click **Knit** to generate an HTML report.
+
+The R packages `data.table`, `knitr`, and `rmarkdown` must be available. Biowulf's
+`R/4.5` module provides them. This document loads `plink/1.9.0-beta4.4` for
+clumping and `plink/7.1-alpha` (PLINK 2) for scoring in separate shell processes.
+
+Alternatively, from the `src` directory in a **compute-node terminal**:
+
+```bash
+module load R/4.5
+Rscript -e 'rmarkdown::render("06_PRS.Rmd")'
+```
+
+To create a code-only preview without running the analyses:
+
+```r
+rmarkdown::render("06_PRS.Rmd", params = list(execute = FALSE),
+                  output_file = "06_PRS.preview.html")
+```
+
+```{r preview-label, eval=TRUE, echo=FALSE, results='asis'}
+if (!isTRUE(params$execute)) {
+  cat("**Code-only preview: no analyses or data checks were run.**\n\n")
+}
+```
+
+## Input files and output directory
+
+The `data_dir` parameter points directly to the supplied `data/` folder. Only
+the following files are required:
+
+| Path relative to `data_dir` | Role |
+|:---|:---|
+| `EUR_sum_data` | GWAS statistics: `SNP`, `A1`, `BETA`, `P` |
+| `1kg_eur_22/chr_22.bed`, `.bim`, `.fam` | European LD reference |
+| `prs_genotype/chr22_test.bed`, `.bim`, `.fam` | Target genotypes |
+| `y_out` | Quantitative outcomes with columns `ID` and `y` |
+
+Each run creates a new subdirectory of `06_PRS_results/` beside your copy of
+the tutorial. The shared inputs are read only. Change `output_dir` in the YAML
+header to use another writable location. Logs, scores, coefficients, the
+sample split, and performance tables are saved there.
+
+```{r paths-and-resources}
+library(data.table)
+setDTthreads(1)
+if (!nzchar(Sys.getenv("SLURM_JOB_ID"))) {
+  stop("Run this tutorial inside a Biowulf compute allocation.")
+}
+threads <- as.integer(params$threads)
+allocated_cpus <- as.integer(Sys.getenv("SLURM_CPUS_PER_TASK", "1"))
+if (is.na(threads) || threads < 1L || threads > allocated_cpus) {
+  stop("threads must be between 1 and SLURM_CPUS_PER_TASK (or 1 if unset).")
+}
+memory_mb <- as.integer(params$memory_mb)
+if (is.na(memory_mb) || memory_mb < 640L) stop("memory_mb must be at least 640.")
+if (!is.finite(params$clump_r2) || params$clump_r2 <= 0 || params$clump_r2 >= 1 ||
+    !is.finite(params$clump_kb) || params$clump_kb <= 0) {
+  stop("Use 0 < clump_r2 < 1 and clump_kb > 0.")
+}
+Sys.setenv(OMP_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1", MKL_NUM_THREADS = "1")
+
+data_dir <- normalizePath(params$data_dir, mustWork = TRUE)
+sum_data_file <- file.path(data_dir, "EUR_sum_data")
+ref_data <- file.path(data_dir, "1kg_eur_22", "chr_22")
+geno_file <- file.path(data_dir, "prs_genotype", "chr22_test")
+outcome_file <- file.path(data_dir, "y_out")
+inputs <- c(sum_data_file, paste0(ref_data, c(".bed", ".bim", ".fam")),
+            paste0(geno_file, c(".bed", ".bim", ".fam")), outcome_file)
+missing_inputs <- inputs[!file.exists(inputs) | file.access(inputs, 4) != 0]
+if (length(missing_inputs)) stop("Missing/unreadable input: ",
+                                 paste(missing_inputs, collapse = ", "))
+
+output_dir <- normalizePath(path.expand(params$output_dir), mustWork = FALSE)
+if (output_dir == data_dir || startsWith(output_dir, paste0(data_dir, "/"))) {
+  stop("Choose an output_dir outside the shared input directory.")
+}
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+run_dir <- tempfile(pattern = paste0("run_", format(Sys.time(), "%Y%m%d_%H%M%S"), "_"),
+                    tmpdir = output_dir)
+if (!dir.create(run_dir)) stop("Cannot create a results directory: ", run_dir)
+run_dir <- normalizePath(run_dir)
+saveRDS(params, file.path(run_dir, "parameters.rds"))
+writeLines(c(paste("Host:", Sys.info()[["nodename"]]),
+             paste("Job:", Sys.getenv("SLURM_JOB_ID")),
+             paste("Working directory:", getwd()),
+             paste("Started:", Sys.time())), file.path(run_dir, "run_info.txt"))
+knitr::kable(data.frame(input = sub(paste0(data_dir, "/"), "", inputs, fixed = TRUE),
+                        MB = round(file.info(inputs)$size / 1024^2, 2)))
+cat("Results directory:", run_dir, "\n")
+```
+
+## Run PLINK from R
+
+This helper loads the appropriate Biowulf module in a child shell, records the
+command and its output, and stops if PLINK fails. Switching PLINK versions
+does not change the RStudio environment.
+
+```{r plink-helper}
+run_plink <- function(version, args, label) {
+  module_name <- switch(version, "1" = "plink/1.9.0-beta4.4", "2" = "plink/7.1-alpha")
+  binary <- switch(version, "1" = "plink", "2" = "plink2")
+  if (is.null(module_name)) stop("Unknown PLINK version.")
+  command <- paste(c(binary, shQuote(as.character(args))), collapse = " ")
+  script <- file.path(run_dir, paste0(label, ".sh"))
+  log <- file.path(run_dir, paste0(label, ".console.log"))
+  writeLines(c("#!/bin/bash", "set -eo pipefail",
+               "if ! type module >/dev/null 2>&1; then source /etc/profile.d/modules.sh; fi",
+               paste("module load", shQuote(module_name)), command), script)
+  status <- system2("bash", shQuote(script), stdout = log, stderr = log)
+  if (status != 0L) stop("PLINK failed; inspect ", log)
+  invisible(log)
+}
+version_logs <- c(run_plink("1", "--version", "plink1_version"),
+                  run_plink("2", "--version", "plink2_version"))
+cat(unlist(lapply(version_logs, readLines)), sep = "\n")
+resource_args <- c("--threads", threads, "--memory", memory_mb)
+```
+
+# Inspect the summary statistics and outcomes
+
+`BETA` is the effect per copy of `A1`; it is not an odds ratio. The supplied
+files are prepared with consistent variant identifiers and allele coding.
+For another dataset, verify genome build, strand, both alleles, and independence
+of discovery and target samples before scoring. Matching an rsID alone is
+insufficient to establish allele alignment.
+
+```{r read-data}
+EUR_sum <- fread(sum_data_file, colClasses = c(SNP = "character", A1 = "character"))
+required_columns <- c("SNP", "A1", "BETA", "P")
+if (!all(required_columns %in% names(EUR_sum))) stop("Summary-statistic columns are missing.")
+if (anyNA(EUR_sum[, ..required_columns]) || anyDuplicated(EUR_sum$SNP) ||
+    any(!nzchar(EUR_sum$SNP)) || any(!nzchar(EUR_sum$A1)) ||
+    any(!is.finite(EUR_sum$BETA)) || any(!is.finite(EUR_sum$P)) ||
+    any(EUR_sum$P < 0 | EUR_sum$P > 1)) stop("Invalid summary statistics.")
+
+fam <- fread(paste0(geno_file, ".fam"), header = FALSE, colClasses = "character")
+setnames(fam, c("FID", "IID", "father", "mother", "sex", "phenotype"))
+y_out <- fread(outcome_file, colClasses = c(ID = "character"))
+if (!all(c("ID", "y") %in% names(y_out))) stop("y_out must contain ID and y.")
+if (nrow(y_out) != 20000L || nrow(fam) != 20000L ||
+    anyNA(y_out$ID) || anyNA(fam$IID) || anyDuplicated(y_out$ID) ||
+    anyDuplicated(fam$IID) || !setequal(y_out$ID, fam$IID) ||
+    any(!is.finite(y_out$y))) {
+  stop("Expected 20,000 finite outcomes and uniquely matching target IIDs.")
+}
+# Preserve phenotype order for the split; attach genotype identifiers explicitly.
+samples <- data.table(FID = fam$FID[match(y_out$ID, fam$IID)],
+                      IID = y_out$ID, y = y_out$y,
+                      cohort = rep(c("tuning", "validation"), each = 10000L))
+fwrite(samples[, .(FID, IID, cohort)], file.path(run_dir, "sample_split.tsv"), sep = "\t")
+knitr::kable(data.frame(summary_variants = nrow(EUR_sum), target_samples = nrow(samples),
+                        tuning_samples = sum(samples$cohort == "tuning"),
+                        validation_samples = sum(samples$cohort == "validation")))
+```
+
+The first 10,000 rows of `y_out` form the tuning set and the last 10,000 form
+the validation set. In the supplied data these are IDs 100001–110000 and
+110001–120000, respectively.
+Do not use validation outcomes to choose the threshold.
+
+# LD clumping with PLINK 1.9
+
+Clumping selects a lead SNP and groups nearby SNPs correlated with it, starting
+with the smallest GWAS p-value. We use a **500 kb radius**, **LD \(r^2 = 0.1\)**,
+and `--clump-p1 1` so index SNPs across the p-value range can be considered.
+LD \(r^2\) measures correlation between variants and differs from
+the prediction \(R^2\) calculated later.
+
+```{r clump}
+clump_prefix <- file.path(run_dir, "LD_clump")
+run_plink("1", c("--bfile", ref_data, "--clump", sum_data_file,
+                 "--clump-p1", "1", "--clump-r2", params$clump_r2,
+                 "--clump-kb", params$clump_kb,
+                 resource_args, "--out", clump_prefix), "clumping")
+clump_file <- paste0(clump_prefix, ".clumped")
+if (!file.exists(clump_file)) stop("No clumps were produced; inspect the PLINK log.")
+LD_clump <- fread(clump_file)
+if (!"SNP" %in% names(LD_clump) || !nrow(LD_clump)) stop("No lead SNPs were found.")
+clumped <- EUR_sum[match(LD_clump$SNP, EUR_sum$SNP), .(SNP, A1, BETA, P)]
+if (anyNA(clumped)) stop("Clumped SNPs did not match the summary statistics.")
+
+# Clump all summary variants, then retain scoreable target variants.
+target_bim <- fread(paste0(geno_file, ".bim"), header = FALSE, colClasses = "character")
+setnames(target_bim, c("CHR", "SNP", "CM", "BP", "allele1", "allele2"))
+if (anyDuplicated(target_bim$SNP)) stop("Duplicate target variant IDs.")
+available <- clumped$SNP %in% target_bim$SNP
+cat("LD-clumped lead SNPs:", nrow(clumped),
+    "\nLead SNPs absent from target:", sum(!available), "\n")
+prs_prep <- clumped[available]
+target_index <- match(prs_prep$SNP, target_bim$SNP)
+allele_match <- prs_prep$A1 == target_bim$allele1[target_index] |
+               prs_prep$A1 == target_bim$allele2[target_index]
+if (!nrow(prs_prep) || any(!allele_match)) {
+  stop("No usable variants, or effect-allele mismatch; check input harmonization.")
+}
+setorder(prs_prep, P, SNP)
+fwrite(prs_prep, file.path(run_dir, "clumped_score_candidates.tsv"), sep = "\t")
+knitr::kable(head(prs_prep)[, .(SNP, A1, BETA, P = format(P, scientific = TRUE))])
+```
+
+# Calculate PRS at nine p-value thresholds
+
+For each threshold, retain clumped SNPs with `P <= threshold` and write their
+`SNP`, `A1`, and `BETA` values. `header` skips the coefficient-file header;
+`1 2 3` identifies the input columns. `SCORE1_SUM` is the weighted allele sum.
+With `no-mean-imputation`, a missing genotype contributes no term to the sum. Missingness can affect scores in real data.
+
+The reference has many variants absent from the target. Clumping uses the full
+summary statistics. Lead SNPs absent from the target are omitted before scoring. The table reports
+both the selected lead SNPs and the SNPs actually scored at each threshold.
+
+```{r score-thresholds}
+pthres <- c(5e-8, 5e-7, 5e-6, 5e-5, 5e-4, 5e-3, 5e-2, 5e-1, 1)
+performance <- data.table(threshold = pthres, n_lead_snps = 0L, n_scored_snps = 0L,
+                           tuning_R2 = NA_real_, status = "not scored")
+for (k in seq_along(pthres)) {
+  prs_coeff <- prs_prep[P <= pthres[k], .(SNP, A1, BETA)]
+  performance$n_lead_snps[k] <- sum(clumped$P <= pthres[k])
+  performance$n_scored_snps[k] <- nrow(prs_coeff)
+  if (!nrow(prs_coeff)) {
+    performance$status[k] <- "no SNPs at this threshold"
+    next
+  }
+  coefficient_file <- file.path(run_dir, paste0("prs_coeff_", k, ".tsv"))
+  score_prefix <- file.path(run_dir, paste0("prs_", k))
+  fwrite(prs_coeff, coefficient_file, sep = "\t")
+  run_plink("2", c("--bfile", geno_file,
+                   "--score", coefficient_file, "1", "2", "3", "header",
+                   "no-mean-imputation", "list-variants", "cols=+fid,+scoresums,-scoreavgs",
+                   resource_args, "--out", score_prefix), paste0("scoring_", k))
+  used_snps <- readLines(paste0(score_prefix, ".sscore.vars"))
+  if (!setequal(used_snps, prs_coeff$SNP)) stop("PLINK skipped scoring variants; inspect its log.")
+  performance$status[k] <- "scored"
+}
+knitr::kable(performance[, .(threshold = format(threshold, scientific = TRUE),
+                              n_lead_snps, n_scored_snps, status)])
+```
+
+# Select the threshold using the tuning set
+
+Read scores by **FID and IID**, and reorder them to match the outcome table.
+An empty SNP set or a constant score cannot be evaluated and is excluded from
+threshold selection. Validation outcomes are not used here.
+
+```{r tune}
+read_scores <- function(k) {
+  scores <- fread(file.path(run_dir, paste0("prs_", k, ".sscore")),
+                   colClasses = "character")
+  setnames(scores, sub("^#", "", names(scores)))
+  if (!all(c("FID", "IID", "SCORE1_SUM") %in% names(scores))) {
+    stop("Missing expected columns in PLINK score output.")
+  }
+  key <- paste(scores$FID, scores$IID, sep = "\t")
+  expected_key <- paste(samples$FID, samples$IID, sep = "\t")
+  if (anyDuplicated(key) || !setequal(key, expected_key)) {
+    stop("Scored sample IDs do not match the outcomes.")
+  }
+  score <- as.numeric(scores$SCORE1_SUM[match(expected_key, key)])
+  if (any(!is.finite(score))) stop("Non-finite PRS values.")
+  score
+}
+tuning <- samples$cohort == "tuning"
+if (var(samples$y[tuning]) == 0) stop("The tuning outcome is constant.")
+for (k in which(performance$status == "scored")) {
+  score <- read_scores(k)
+  if (var(score[tuning]) == 0) {
+    performance$status[k] <- "constant tuning score"
+    next
+  }
+  model <- lm(y ~ PRS, data = data.frame(y = samples$y[tuning], PRS = score[tuning]))
+  performance$tuning_R2[k] <- summary(model)$r.squared
+}
+eligible <- which(is.finite(performance$tuning_R2))
+if (!length(eligible)) stop("No threshold produced an evaluable tuning score.")
+# Thresholds are ascending; a tie selects the smaller threshold.
+best_k <- eligible[which.max(performance$tuning_R2[eligible])]
+fwrite(performance, file.path(run_dir, "tuning_performance.tsv"), sep = "\t")
+performance_display <- copy(performance)
+performance_display[, threshold := format(threshold, scientific = TRUE)]
+knitr::kable(performance_display, digits = 6)
+plot(performance$threshold, performance$tuning_R2, log = "x", type = "b", pch = 16,
+     xlab = "GWAS p-value threshold", ylab = expression("Tuning " * R^2),
+     main = "Choose the threshold using the tuning set")
+points(performance$threshold[best_k], performance$tuning_R2[best_k],
+       pch = 19, col = "firebrick", cex = 1.5)
+```
+
+# Evaluate the selected score in the validation set
+
+Evaluate **only the selected threshold**. Fit `y ~ PRS` in the validation set
+and report its \(R^2\). For one score and
+an intercept, this equals squared Pearson correlation. This measures PRS
+association in held-out samples; it does not test calibration of a prediction
+equation frozen in the tuning set.
+
+```{r validate}
+validation <- samples$cohort == "validation"
+best_score <- read_scores(best_k)
+if (var(samples$y[validation]) == 0 || var(best_score[validation]) == 0) {
+  stop("Validation R-squared is undefined for a constant outcome or score.")
+}
+validation_model <- lm(y ~ PRS, data = data.frame(
+  y = samples$y[validation], PRS = best_score[validation]))
+validation_result <- data.table(
+  selected_threshold = pthres[best_k], n_scored_snps = performance$n_scored_snps[best_k],
+  tuning_n = sum(tuning), tuning_R2 = performance$tuning_R2[best_k],
+  validation_n = sum(validation), validation_R2 = summary(validation_model)$r.squared)
+fwrite(validation_result, file.path(run_dir, "validation_performance.tsv"), sep = "\t")
+validation_display <- copy(validation_result)
+validation_display[, selected_threshold := format(selected_threshold, scientific = TRUE)]
+knitr::kable(validation_display, digits = 6)
+saveRDS(validation_model, file.path(run_dir, "validation_model.rds"))
+```
+
+## Questions
+
+1. How does the number of SNPs change as the p-value threshold increases?
+2. Does the threshold with the most SNPs have the highest tuning \(R^2\)?
+3. Why would choosing a threshold using validation outcomes give an optimistic
+   performance estimate?
+4. Why might a PRS using European GWAS and LD reference data perform differently
+   in another ancestry group?
+5. What additional checks and covariates would an observational study need?
+
+This unadjusted chromosome 22 simulation illustrates the workflow. It is not a
+genome-wide prediction model or an estimate of clinical performance.
+
+# Record the software environment
+
+```{r session-info}
+writeLines(capture.output(sessionInfo()), file.path(run_dir, "sessionInfo.txt"))
+sessionInfo()
+cat("Saved results:", run_dir, "\n")
+```
+
+Results are from the current run. PLINK `.log` files and `.console.log` files
+contain variant counts, warnings, and versions; `.sh` files record the commands.
+
+Documentation: [PLINK 1.9 clumping](https://www.cog-genomics.org/plink/1.9/postproc#clump),
+[PLINK 2 scoring](https://www.cog-genomics.org/plink/2.0/score), and
+[Biowulf PLINK modules](https://hpc.nih.gov/apps/plink.html).
