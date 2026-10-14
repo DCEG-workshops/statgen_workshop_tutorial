@@ -109,6 +109,15 @@ Use **Knit** to run the document and generate an HTML report. To run individual
 chunks, first select **Session > Set Working Directory > To Source File Location**
 in RStudio, then run the setup chunk and the subsequent chunks in order.
 The Terminal's `cd` command does not change the R session's working directory.
+
+The **setup** chunk creates `can_run`, which controls whether each analysis can
+run. If an object is missing in a later chunk, first check that setup completed
+without an error. Enter `can_run` in the R Console to check for the named `gcta`,
+`ldsc`, and `sldsc` flags. A `FALSE` flag means preview mode is active or that
+section is disabled or unavailable; consult the readiness table. Rerun setup
+after restarting R, even if you previously knitted the document, because
+**Knit** runs in a separate R session.
+
 You can also render the document from its containing directory:
 
 ```r
@@ -182,7 +191,7 @@ ID, and quantitative phenotype. Both IDs must match the genotype file. The
 phenotype column in `chr22.fam` contains only the missing-value code `-9` and
 must not replace this phenotype file.
 
-```{r gcta-check-phenotype, eval=can_run[['gcta']]}
+```{r gcta-check-phenotype, eval=get('can_run', envir=knitr::knit_global())[['gcta']]}
 phenotype_summary <- validate_gcta_phenotype(
   file.path(data_dir, "chr22.fam"), phenotype_path
 )
@@ -191,7 +200,7 @@ knitr::kable(phenotype_summary)
 
 ### Estimate the genetic relationship matrix
 
-```{r gcta-grm, eval=can_run[['gcta']]}
+```{r gcta-grm, eval=get('can_run', envir=knitr::knit_global())[['gcta']]}
 grm_prefix <- file.path(run_dir, "chr22")
 run_command(
   tool_paths[["gcta"]],
@@ -207,7 +216,7 @@ run_command(
 Apply a relatedness cutoff of 0.05. Inspect the GCTA log for the number of
 individuals retained after this cutoff.
 
-```{r gcta-reml, eval=can_run[['gcta']]}
+```{r gcta-reml, eval=get('can_run', envir=knitr::knit_global())[['gcta']]}
 gcta_prefix <- file.path(run_dir, "gcta_herit")
 run_command(
   tool_paths[["gcta"]],
@@ -269,7 +278,7 @@ liability-scale heritability or a proportion of an individual's disease risk.
 Read a few rows for inspection without loading the complete overall breast
 cancer file into R. LDSC will read the full file in the next step.
 
-```{r ldsc-inspect-input, eval=can_run[['ldsc']]}
+```{r ldsc-inspect-input, eval=get('can_run', envir=knitr::knit_global())[['ldsc']]}
 bcac_overall <- data.table::fread(
   file.path(data_dir, "overall_bc"), nrows = 6L
 )
@@ -283,7 +292,7 @@ least 0.01. Alleles are matched against the supplied
 HapMap3 SNP list. Examine the munging log to see how many variants remain after
 each filter.
 
-```{r ldsc-munge-overall, eval=can_run[['ldsc']]}
+```{r ldsc-munge-overall, eval=get('can_run', envir=knitr::knit_global())[['ldsc']]}
 munge_overall_prefix <- file.path(run_dir, "ldsc_herit_overall")
 munge_result <- paste0(munge_overall_prefix, ".sumstats.gz")
 
@@ -310,7 +319,7 @@ The same chromosome-specific European LD scores are used for the reference
 and regression weights. The trailing slash is required because LDSC appends
 chromosome numbers to this prefix.
 
-```{r ldsc-overall-h2, eval=can_run[['ldsc']]}
+```{r ldsc-overall-h2, eval=get('can_run', envir=knitr::knit_global())[['ldsc']]}
 eur_ld_prefix <- paste0(file.path(data_dir, "eur_w_ld_chr"), "/")
 h2_overall_prefix <- file.path(run_dir, "h2_overall")
 
@@ -337,14 +346,14 @@ size definition.
 Prepare luminal A and triple-negative breast cancer summary statistics with
 the same filters used for overall breast cancer.
 
-```{r ldsc-inspect-subtypes, eval=can_run[['ldsc']]}
+```{r ldsc-inspect-subtypes, eval=get('can_run', envir=knitr::knit_global())[['ldsc']]}
 lua <- data.table::fread(file.path(data_dir, "lua_bc"), nrows = 6L)
 tn <- data.table::fread(file.path(data_dir, "tn_bc"), nrows = 6L)
 knitr::kable(lua, caption = "Luminal A summary statistics")
 knitr::kable(tn, caption = "Triple-negative summary statistics")
 ```
 
-```{r ldsc-munge-subtypes, eval=can_run[['ldsc']]}
+```{r ldsc-munge-subtypes, eval=get('can_run', envir=knitr::knit_global())[['ldsc']]}
 subtype_inputs <- c(lua = "lua_bc", tn = "tn_bc")
 for (subtype in names(subtype_inputs)) {
   subtype_prefix <- file.path(run_dir, paste0("ldsc_herit_", subtype))
@@ -369,7 +378,7 @@ munge_result_lua <- file.path(run_dir, "ldsc_herit_lua.sumstats.gz")
 munge_result_tn <- file.path(run_dir, "ldsc_herit_tn.sumstats.gz")
 ```
 
-```{r ldsc-genetic-correlation, eval=can_run[['ldsc']]}
+```{r ldsc-genetic-correlation, eval=get('can_run', envir=knitr::knit_global())[['ldsc']]}
 rg_prefix <- file.path(run_dir, "rg_lua_tn")
 run_ldsc(
   "ldsc.py",
@@ -400,7 +409,7 @@ weights, and the overall breast cancer summary statistics prepared above.
 section_note("sldsc")
 ```
 
-```{r sldsc-estimate, eval=can_run[['sldsc']]}
+```{r sldsc-estimate, eval=get('can_run', envir=knitr::knit_global())[['sldsc']]}
 sldsc_prefix <- file.path(run_dir, "h2_sldsc")
 run_ldsc(
   "ldsc.py",
@@ -432,7 +441,7 @@ also have substantial uncertainty. Inspect its standard error and P value
 before drawing a conclusion; the maximum is selected after comparing several
 annotations.
 
-```{r sldsc-results, eval=can_run[['sldsc']]}
+```{r sldsc-results, eval=get('can_run', envir=knitr::knit_global())[['sldsc']]}
 enrichment_result <- data.table::fread(paste0(sldsc_prefix, ".results"))
 required_enrichment_columns <- c(
   "Category", "Prop._SNPs", "Prop._h2", "Prop._h2_std_error",
@@ -457,7 +466,7 @@ knitr::kable(
 Examine the Andersson enhancer annotation in more detail. Select it by name
 to identify the same annotation regardless of the results table's row order.
 
-```{r sldsc-andersson-enhancers, eval=can_run[['sldsc']]}
+```{r sldsc-andersson-enhancers, eval=get('can_run', envir=knitr::knit_global())[['sldsc']]}
 andersson_result <- enrichment_result[
   enrichment_result$Category == "Enhancer_AnderssonL2_0"
 ]
