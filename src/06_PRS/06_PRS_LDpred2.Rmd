@@ -1,0 +1,1177 @@
+---
+title: "Session 6: Polygenic Risk Scores"
+subtitle: "Clumping, thresholding, and LDpred2 in RStudio on Biowulf"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    code_folding: show
+    self_contained: true
+    math_method: mathml
+    theme: readable
+params:
+  execute: true
+  data_dir: "/data/DCEG_shared/statgen_workshop_2026/data/workshop6/data/"
+  output_dir: "06_PRS_results"
+  threads: 1
+  memory_mb: 2048
+  clump_r2: 0.1
+  clump_kb: 500
+  run_ldpred2: true
+  ldpred_mode: "fit"
+  prepared_ldpred_file: "06_PRS_LDpred2_prepared.rds"
+  ld_file: "06_PRS_1000G_LD.rds"
+  rebuild_ld: false
+  ld_window_kb: 3000
+  ld_shrink: 0.95
+  ref_maf: 0.01
+  ref_geno: 0.01
+  ldpred_p: !r c(0.01, 0.1)
+  ldpred_h2: !r c(0.01, 0.1)
+  ldpred_burn_in: 50
+  ldpred_num_iter: 100
+  ldpred_seed: 20261027
+---
+
+```{r setup, include=FALSE}
+# Activate the project library before loading knitr for interactive YAML parsing.
+project_libraries <- c("06_PRS_R_binary_library", "06_PRS_R_library")
+.libPaths(c(normalizePath(project_libraries[dir.exists(project_libraries)]), .libPaths()))
+# Knit creates params from YAML. Running chunks directly does not.
+# Reload defaults for an interactive run, including after opening an older version.
+if (!isTRUE(getOption("knitr.in.progress"))) {
+  input <- if (file.exists("06_PRS_LDpred2.Rmd")) "06_PRS_LDpred2.Rmd" else "06_PRS.Rmd"
+  if (!file.exists(input)) stop("Set the working directory to the source file location.")
+  params <- lapply(knitr::knit_params(readLines(input), evaluate = TRUE), function(x) x$value)
+}
+for (flag in c("execute", "run_ldpred2", "rebuild_ld")) {
+  if (!is.logical(params[[flag]]) || length(params[[flag]]) != 1L || is.na(params[[flag]])) {
+    stop(flag, " must be true or false in YAML.")
+  }
+}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, warning = TRUE,
+                     message = FALSE, cache = FALSE, eval = params$execute,
+                     fig.width = 7, fig.height = 4.5)
+```
+
+# Overview
+
+This practical introduces polygenic risk scores using chromosome 22 GWAS
+summary statistics, a European 1000 Genomes LD reference, simulated target
+genotypes, and a quantitative outcome.
+
+We will:
+
+1. Use PLINK 1.9 to select approximately independent variants by LD clumping.
+2. Use PLINK 2 to calculate a PRS at nine GWAS p-value thresholds.
+3. Select a threshold using 10,000 tuning samples.
+4. Fit four LDpred2 models using the same input data and select one in the tuning set.
+5. Compare the two selected scores in 10,000 separate validation samples.
+
+Suggested 90-minute schedule: setup (10 minutes), C+T (30), tuning discussion
+(10), LDpred2 (20), comparison (15), and buffer (5). Instructors should install
+packages, precompute the LD matrix, and run this document before class.
+Students fit the small example using the supplied LD matrix; prepared scores
+are the fallback if fitting cannot finish during class. Complete the session
+launch, file download, package installation, and shared-data access check before
+the lab. During class, run chunks in order **or** Knit; doing both repeats the
+analysis. The preparation helpers are supplied code, not exercises to rewrite.
+
+For individual \(i\), the score is
+\[
+\mathrm{PRS}_i = \sum_{j \in S} \widehat\beta_j G_{ij},
+\]
+where \(S\) is the selected variant set, \(\widehat\beta_j\) is the GWAS
+coefficient, and \(G_{ij}\) counts copies of the **effect allele A1**.
+This example predicts a quantitative trait, so performance is measured with
+linear-regression \(R^2\).
+
+# Prepare RStudio on Biowulf
+
+Start **RStudio Server through Biowulf OnDemand** on a compute node. Start with
+**2 CPUs, 8 GB RAM, at least 2 hours, and 5 GB local scratch** for this chromosome
+22 exercise. Select **R 4.6** to match the tested environment. The code defaults to one PLINK
+thread and a 2,048 MB PLINK workspace. Keep these settings within your allocation.
+
+## Get your own copy
+
+In the RStudio **Terminal** tab, clone the workshop into a directory you own:
+
+```bash
+mkdir -p "/data/$USER/Stats_Gen/workshop6"
+cd "/data/$USER/Stats_Gen/workshop6"
+git clone https://github.com/DCEG-workshops/statgen_workshop_tutorial.git
+cd statgen_workshop_tutorial/src/06_PRS
+pwd
+```
+
+If you already have a clone, update it to include `src/06_PRS/` and use that
+folder. It contains the editable `06_PRS_LDpred2.Rmd`, the completed reference
+report `06_PRS_LDpred2.prepared.html`, and the prepared-score backup
+`06_PRS_LDpred2_prepared.rds`. Open the HTML in a browser if you want to review
+the finished tutorial before running it.
+
+Download the supplied LD matrix once, **before class**, in the **Terminal**
+from `src/06_PRS/`. It is a 276 MiB GitHub release asset, so cloning alone does
+not download it. This copies the precomputed matrix; it does not calculate LD.
+
+```bash
+curl --fail --location --retry 3 \
+  --output 06_PRS_1000G_LD.rds \
+  https://github.com/DCEG-workshops/statgen_workshop_tutorial/releases/download/prs-tutorial-2026-10-27/06_PRS_1000G_LD.rds
+sha256sum -c SHA256SUMS
+```
+
+Every listed file should report `OK`. Run this check before editing the Rmd;
+after your own edits, its checksum will differ. On macOS, use
+`shasum -a 256 -c SHA256SUMS`. Keep the Rmd and both RDS files together in your
+own writable directory. If the LD download fails, obtain the supplied file
+from the instructor or use prepared mode as described below.
+
+In RStudio, select **File > Open File...** and open `06_PRS_LDpred2.Rmd` in
+`src/06_PRS/`. Select **Session > Set Working Directory > To Source File
+Location** before installing packages or running individual chunks. The
+Terminal's `cd` command does not change R's working directory. Install the
+packages below before running setup or clicking **Knit**.
+
+Run the **setup** chunk first when running chunks interactively. It reads the
+YAML defaults into `params`, preventing `object 'params' not found`. Change
+parameters in the YAML header and **save the file** before running setup.
+Setup reads the saved file. Knit supplies `params`
+automatically and respects overrides passed to `rmarkdown::render()`.
+
+## Install and check R packages before class
+
+Run this code once in the RStudio **Console**, with the working directory set
+to `src/06_PRS/`. Both `bigsnpr` and `bigsparser` need to be installed for live
+LDpred2 fitting. The project library is kept beside the Rmd in your own
+writable directory; shared workshop inputs should never be used for installation.
+
+```r
+dir.create("06_PRS_R_library", showWarnings = FALSE)
+.libPaths(c(normalizePath("06_PRS_R_library"), .libPaths()))
+# Precompiled packages for the tested R 4.6, RHEL 8, x86_64 environment.
+repo <- "https://packagemanager.posit.co/cran/latest/bin/linux/centos8-x86_64/4.6"
+install.packages(c("bigsnpr", "bigsparser"), lib = "06_PRS_R_library", repos = repo)
+
+# Confirm all tutorial packages are available; install any missing core packages.
+required <- c("data.table", "knitr", "rmarkdown", "Matrix", "bigsnpr", "bigsparser")
+missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing)) install.packages(missing, lib = "06_PRS_R_library", repos = repo)
+stopifnot(all(vapply(required, requireNamespace, logical(1), quietly = TRUE)))
+sapply(required, function(pkg) as.character(packageVersion(pkg)))
+```
+
+The six-package check is for **live fitting**. If `bigsnpr` or `bigsparser`
+cannot be installed, use prepared mode below. In that case, check only
+`data.table`, `knitr`, `rmarkdown`, and `Matrix`; the two fitting packages are
+not required for the backup.
+
+Package installation is a one-time preparation step, outside the 90-minute lab;
+it is not rerun when knitting. The setup chunk activates this project library
+when present. Install packages using the **same R version** as your RStudio
+session. The tested versions are R 4.6.1 on Rocky Linux 8.7, `bigsnpr` 1.12.21,
+`bigsparser` 0.7.3, `Matrix` 1.7-5, `data.table` 1.18.6.1, `knitr` 1.52, and
+`rmarkdown` 2.32. They are a reproducibility reference, not exact-version checks.
+
+The binary repository above is specific to this environment. For a different
+R version or operating system, use a compatible repository or
+`https://cloud.r-project.org`; source compilation can take substantially longer.
+See [Posit's Linux binary documentation](https://packagemanager.posit.co/__docs__/admin/serving-binaries.html).
+This document loads `plink/1.9.0-beta4.4` for clumping and `plink/7.1-alpha`
+(PLINK 2) for scoring in separate shell processes.
+
+Alternatively, from the `src/06_PRS/` directory in a **compute-node terminal**:
+
+```bash
+module load R/4.6
+Rscript -e '.libPaths(c(normalizePath("06_PRS_R_library", mustWork = FALSE), .libPaths())); rmarkdown::render("06_PRS_LDpred2.Rmd")'
+```
+
+To create a code-only preview without running the analyses:
+
+```r
+rmarkdown::render("06_PRS_LDpred2.Rmd", params = list(execute = FALSE),
+                  output_file = "06_PRS.preview.html")
+```
+
+```{r preview-label, eval=TRUE, echo=FALSE, results='asis'}
+if (!isTRUE(params$execute)) {
+  cat("**Code-only preview: no analyses or data checks were run.**\n\n")
+}
+```
+
+## Input files and output directory
+
+The `data_dir` parameter points directly to the shared Biowulf folder
+`/data/DCEG_shared/statgen_workshop_2026/data/workshop6/data/`.
+Before class, confirm your account can read it and the files listed below.
+The raw genotypes and outcomes are not duplicated in this GitHub folder.
+If an access check fails, contact the instructor before beginning the lab.
+The `paths-and-resources` chunk checks every required input and reports any
+missing or unreadable file. The following raw-data files are used. The supplied LD and prepared-score
+files are stored separately beside this Rmd, as described above:
+
+| Path relative to `data_dir` | Role |
+|:---|:---|
+| `EUR_sum_data` | Additive GWAS statistics: `CHR`, `SNP`, `BP`, `A1`, `TEST`, `NMISS`, `BETA`, `STAT`, `P` |
+| `1kg_eur_22/chr_22.bed`, `.bim`, `.fam` | European LD reference |
+| `prs_genotype/chr22_test.bed`, `.bim`, `.fam` | Target genotypes |
+| `y_out` | Quantitative outcomes with columns `ID` and `y` |
+
+Each run creates a new subdirectory of `06_PRS_results/` beside your copy of
+the tutorial. The shared inputs are read only. Change `output_dir` in the YAML
+header to use another writable location. Logs, scores, coefficients, the
+sample split, and performance tables are saved there.
+
+```{r paths-and-resources}
+library(data.table)
+setDTthreads(1)
+if (!nzchar(Sys.getenv("SLURM_JOB_ID"))) {
+  stop("Run this tutorial inside a Biowulf compute allocation.")
+}
+threads <- as.integer(params$threads)
+allocated_cpus <- as.integer(Sys.getenv("SLURM_CPUS_PER_TASK", "1"))
+if (is.na(threads) || threads < 1L || threads > allocated_cpus) {
+  stop("threads must be between 1 and SLURM_CPUS_PER_TASK (or 1 if unset).")
+}
+memory_mb <- as.integer(params$memory_mb)
+if (is.na(memory_mb) || memory_mb < 640L) stop("memory_mb must be at least 640.")
+if (!is.finite(params$clump_r2) || params$clump_r2 <= 0 || params$clump_r2 >= 1 ||
+    !is.finite(params$clump_kb) || params$clump_kb <= 0) {
+  stop("Use 0 < clump_r2 < 1 and clump_kb > 0.")
+}
+Sys.setenv(OMP_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1", MKL_NUM_THREADS = "1")
+
+data_dir <- normalizePath(params$data_dir, mustWork = TRUE)
+sum_data_file <- file.path(data_dir, "EUR_sum_data")
+ref_data <- file.path(data_dir, "1kg_eur_22", "chr_22")
+geno_file <- file.path(data_dir, "prs_genotype", "chr22_test")
+outcome_file <- file.path(data_dir, "y_out")
+inputs <- c(sum_data_file, paste0(ref_data, c(".bed", ".bim", ".fam")),
+            paste0(geno_file, c(".bed", ".bim", ".fam")), outcome_file)
+missing_inputs <- inputs[!file.exists(inputs) | file.access(inputs, 4) != 0]
+if (length(missing_inputs)) stop("Missing/unreadable input: ",
+                                 paste(missing_inputs, collapse = ", "))
+
+output_dir <- normalizePath(path.expand(params$output_dir), mustWork = FALSE)
+if (output_dir == data_dir || startsWith(output_dir, paste0(data_dir, "/"))) {
+  stop("Choose an output_dir outside the shared input directory.")
+}
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+run_dir <- tempfile(pattern = paste0("run_", format(Sys.time(), "%Y%m%d_%H%M%S"), "_"),
+                    tmpdir = output_dir)
+if (!dir.create(run_dir)) stop("Cannot create a results directory: ", run_dir)
+run_dir <- normalizePath(run_dir)
+saveRDS(params, file.path(run_dir, "parameters.rds"))
+writeLines(c(paste("Host:", Sys.info()[["nodename"]]),
+             paste("Job:", Sys.getenv("SLURM_JOB_ID")),
+             paste("Working directory:", getwd()),
+             paste("Started:", Sys.time())), file.path(run_dir, "run_info.txt"))
+knitr::kable(data.frame(input = sub(paste0(data_dir, "/"), "", inputs, fixed = TRUE),
+                        MB = round(file.info(inputs)$size / 1024^2, 2)))
+cat("Results directory:", run_dir, "\n")
+```
+
+## Run PLINK from R
+
+This helper loads the appropriate Biowulf module in a child shell, records the
+command and its output, and stops if PLINK fails. Switching PLINK versions
+does not change the RStudio environment.
+
+```{r plink-helper}
+run_plink <- function(version, args, label) {
+  module_name <- switch(version, "1" = "plink/1.9.0-beta4.4", "2" = "plink/7.1-alpha")
+  binary <- switch(version, "1" = "plink", "2" = "plink2")
+  if (is.null(module_name)) stop("Unknown PLINK version.")
+  command <- paste(c(binary, shQuote(as.character(args))), collapse = " ")
+  script <- file.path(run_dir, paste0(label, ".sh"))
+  log <- file.path(run_dir, paste0(label, ".console.log"))
+  writeLines(c("#!/bin/bash", "set -eo pipefail",
+               "if ! type module >/dev/null 2>&1; then source /etc/profile.d/modules.sh; fi",
+               paste("module load", shQuote(module_name)), command), script)
+  status <- system2("bash", shQuote(script), stdout = log, stderr = log)
+  if (status != 0L) stop("PLINK failed; inspect ", log)
+  invisible(log)
+}
+version_logs <- c(run_plink("1", "--version", "plink1_version"),
+                  run_plink("2", "--version", "plink2_version"))
+cat(unlist(lapply(version_logs, readLines)), sep = "\n")
+resource_args <- c("--threads", threads, "--memory", memory_mb)
+```
+
+# Inspect the summary statistics and outcomes
+
+`BETA` is the effect per copy of `A1`; it is not an odds ratio. The supplied
+files are prepared with consistent variant identifiers and allele coding.
+For another dataset, verify genome build, strand, both alleles, and independence
+of discovery and target samples before scoring. Matching an rsID alone is
+insufficient to establish allele alignment.
+
+```{r read-data}
+EUR_sum <- fread(sum_data_file, colClasses = c(SNP = "character", A1 = "character"))
+required_columns <- c("CHR", "SNP", "BP", "A1", "TEST", "NMISS", "BETA", "STAT", "P")
+if (!all(required_columns %in% names(EUR_sum))) stop("Summary-statistic columns are missing.")
+if (anyDuplicated(EUR_sum$SNP)) stop("Duplicate summary SNP IDs.")
+
+fam <- fread(paste0(geno_file, ".fam"), header = FALSE, colClasses = "character")
+setnames(fam, c("FID", "IID", "father", "mother", "sex", "phenotype"))
+y_out <- fread(outcome_file, colClasses = c(ID = "character"))
+if (!all(c("ID", "y") %in% names(y_out))) stop("y_out must contain ID and y.")
+if (nrow(y_out) != 20000L || nrow(fam) != 20000L ||
+    anyNA(y_out$ID) || anyNA(fam$IID) || anyDuplicated(y_out$ID) ||
+    anyDuplicated(fam$IID) || !setequal(y_out$ID, fam$IID) ||
+    any(!is.finite(y_out$y))) {
+  stop("Expected 20,000 finite outcomes and uniquely matching target IIDs.")
+}
+# Preserve phenotype order for the split; attach genotype identifiers explicitly.
+samples <- data.table(FID = fam$FID[match(y_out$ID, fam$IID)],
+                      IID = y_out$ID, y = y_out$y,
+                      cohort = rep(c("tuning", "validation"), each = 10000L))
+fwrite(samples[, .(FID, IID, cohort)], file.path(run_dir, "sample_split.tsv"), sep = "\t")
+knitr::kable(data.frame(summary_variants = nrow(EUR_sum), target_samples = nrow(samples),
+                        tuning_samples = sum(samples$cohort == "tuning"),
+                        validation_samples = sum(samples$cohort == "validation")))
+```
+
+The first 10,000 rows of `y_out` form the tuning set and the last 10,000 form
+the validation set. In the supplied data these are IDs 100001 to 110000 and
+110001 to 120000, respectively.
+Do not use validation outcomes to choose either method's parameters.
+
+
+# Prepare one eligible variant pool for both methods
+
+LDpred2 needs both alleles, standard errors, and GWAS sample sizes in addition
+to effect estimates. The supplied PLINK `ADD` results report the signed test
+statistic, so we reconstruct \(\mathrm{SE}=\mathrm{BETA}/\mathrm{STAT}\).
+Rows with undefined or nonpositive SE are excluded. `NMISS` supplies the
+per-variant discovery sample size for this quantitative trait, not the target
+or reference sample size. Rounded input statistics make the reconstructed SE
+approximate; use the original SE column when available in a new study.
+
+These particular SNP IDs encode position and both alleles, for example
+`rs62224609:16051249:T:C`. The helper below is specific to that convention.
+It checks exact IDs, coordinates, and allele pairs against both genotype files,
+removes palindromic SNPs and duplicate positions, and aligns effects to reference
+allele1. It does not infer strand flips or genome builds. A new dataset requires
+its own harmonization workflow.
+
+Both methods start with this **unclumped** common pool. C+T then selects a
+subset; LDpred2 uses joint LD information to shrink effects across the pool.
+Clumping after restricting to target variants avoids choosing a lead SNP that
+cannot be scored and then losing its available correlated alternatives.
+
+```{r harmonization-helper, echo=FALSE}
+# Harmonize the supplied workshop files, whose IDs have four colon-separated
+# fields: chromosome or rsID, position, allele, allele. No strand flips are used.
+prepare_candidates <- function(ss, ref_bim, target_bim) {
+  if (!requireNamespace("data.table", quietly = TRUE)) {
+    stop("Install data.table before preparing variants.")
+  }
+  ss <- data.table::as.data.table(data.table::copy(ss))
+  ref_bim <- data.table::as.data.table(data.table::copy(ref_bim))
+  target_bim <- data.table::as.data.table(data.table::copy(target_bim))
+  ss_columns <- c("CHR", "SNP", "BP", "A1", "TEST", "NMISS", "BETA", "STAT", "P")
+  bim_columns <- c("CHR", "SNP", "CM", "BP", "allele1", "allele2")
+  for (item in list(list(ss, ss_columns, "Summary statistics"),
+                    list(ref_bim, bim_columns, "Reference BIM"),
+                    list(target_bim, bim_columns, "Target BIM"))) {
+    missing <- setdiff(item[[2]], names(item[[1]]))
+    if (length(missing)) {
+      stop(item[[3]], " missing columns: ", paste(missing, collapse = ", "))
+    }
+    if (anyDuplicated(as.character(item[[1]]$SNP))) {
+      stop(item[[3]], " contains duplicate SNP IDs.")
+    }
+  }
+  as_number <- function(x) suppressWarnings(as.numeric(as.character(x)))
+  chr_label <- function(x) sub("^chr", "", as.character(x), ignore.case = TRUE)
+  ss[, SNP := as.character(SNP)]
+  ref_bim[, SNP := as.character(SNP)]
+  target_bim[, SNP := as.character(SNP)]
+
+  audit <- data.table::data.table(stage = character(), reason = character(),
+                                  before = integer(), removed = integer(),
+                                  retained = integer())
+  dat <- ss
+  keep_rows <- function(keep, stage, reason) {
+    keep[is.na(keep)] <- FALSE
+    n_before <- nrow(dat)
+    dat <<- dat[keep]
+    audit <<- data.table::rbindlist(list(audit, data.table::data.table(
+      stage = stage, reason = reason, before = n_before,
+      removed = n_before - nrow(dat), retained = nrow(dat))))
+    if (!nrow(dat)) stop("No eligible variants remain after ", stage, ": ", reason)
+  }
+  keep_rows(!is.na(dat$SNP) & nzchar(dat$SNP) & dat$TEST == "ADD",
+            "additive_tests", "Retain nonempty SNP IDs with TEST = ADD.")
+  keep_rows(dat$SNP %in% ref_bim$SNP & dat$SNP %in% target_bim$SNP,
+            "shared_ids", "Require an exact SNP ID in both genotype datasets.")
+
+  dat[, reference_row := match(SNP, ref_bim$SNP)]
+  dat[, target_row := match(SNP, target_bim$SNP)]
+  dat[, CHR := chr_label(CHR)]
+  dat[, BP := as_number(BP)]
+  ref_chr <- chr_label(ref_bim$CHR[dat$reference_row])
+  target_chr <- chr_label(target_bim$CHR[dat$target_row])
+  ref_bp <- as_number(ref_bim$BP[dat$reference_row])
+  target_bp <- as_number(target_bim$BP[dat$target_row])
+  keep_rows(!is.na(dat$CHR) & nzchar(dat$CHR) & is.finite(dat$BP) &
+              dat$BP > 0 & dat$BP == floor(dat$BP) &
+              dat$CHR == ref_chr & dat$CHR == target_chr &
+              dat$BP == ref_bp & dat$BP == target_bp,
+            "matching_coordinates", "Require matching chromosome and base-pair position.")
+
+  # Only the supplied four-field ID convention is accepted. An rsID first
+  # field has no embedded chromosome; numeric chromosome fields are checked.
+  tokens <- strsplit(dat$SNP, ":", fixed = TRUE)
+  valid_length <- lengths(tokens) == 4L
+  fields <- matrix(NA_character_, nrow(dat), 4L)
+  if (any(valid_length)) fields[valid_length, ] <- do.call(rbind, tokens[valid_length])
+  embedded_chr <- grepl("^(chr)?[0-9]+$", fields[, 1], ignore.case = TRUE)
+  valid_first <- embedded_chr | grepl("^rs[0-9]+$", fields[, 1])
+  dat[, id_allele1 := fields[, 3]]
+  dat[, id_allele2 := fields[, 4]]
+  keep_rows(valid_length & valid_first &
+              as_number(fields[, 2]) == dat$BP &
+              (!embedded_chr | chr_label(fields[, 1]) == dat$CHR),
+            "composite_ids", "Require the supplied four-field ID and matching embedded coordinates.")
+
+  dat[, ref_a1 := as.character(ref_bim$allele1[reference_row])]
+  dat[, ref_a2 := as.character(ref_bim$allele2[reference_row])]
+  dat[, target_a1 := as.character(target_bim$allele1[target_row])]
+  dat[, target_a2 := as.character(target_bim$allele2[target_row])]
+  bases <- c("A", "C", "G", "T")
+  keep_rows(dat$id_allele1 %in% bases & dat$id_allele2 %in% bases &
+              dat$id_allele1 != dat$id_allele2 &
+              dat$ref_a1 %in% bases & dat$ref_a2 %in% bases &
+              dat$ref_a1 != dat$ref_a2 &
+              dat$target_a1 %in% bases & dat$target_a2 %in% bases &
+              dat$target_a1 != dat$target_a2,
+            "biallelic_snps", "Require two distinct single-base A/C/G/T alleles.")
+  allele_key <- function(a, b) paste0(pmin(a, b), pmax(a, b))
+  id_key <- allele_key(dat$id_allele1, dat$id_allele2)
+  keep_rows(!id_key %in% c("AT", "CG"),
+            "unambiguous_alleles", "Remove palindromic A/T and C/G SNPs.")
+  id_key <- allele_key(dat$id_allele1, dat$id_allele2)
+  keep_rows(allele_key(dat$ref_a1, dat$ref_a2) == id_key &
+              allele_key(dat$target_a1, dat$target_a2) == id_key &
+              (dat$A1 == dat$id_allele1 | dat$A1 == dat$id_allele2),
+            "matching_alleles", "Require both genotype allele pairs and the GWAS effect allele to agree with the ID.")
+
+  locus <- paste(dat$CHR, dat$BP, sep = ":")
+  keep_rows(!duplicated(locus) & !duplicated(locus, fromLast = TRUE),
+            "unique_positions", "Remove every candidate at a duplicated chromosome-position pair.")
+  for (column in c("NMISS", "BETA", "STAT", "P")) {
+    data.table::set(dat, j = column, value = as_number(dat[[column]]))
+  }
+  dat[, SE := BETA / STAT]
+  keep_rows(is.finite(dat$BETA) & is.finite(dat$STAT) & dat$STAT != 0 &
+              is.finite(dat$SE) & dat$SE > 0 &
+              is.finite(dat$NMISS) & dat$NMISS > 2 &
+              dat$NMISS == floor(dat$NMISS) &
+              is.finite(dat$P) & dat$P >= 0 & dat$P <= 1,
+            "valid_statistics", "Require a positive signed BETA/STAT standard error, integer NMISS > 2, and valid P.")
+
+  dat[, GWAS_A1 := as.character(A1)]
+  dat[, beta_reversed := GWAS_A1 != ref_a1]
+  dat[, BETA := ifelse(beta_reversed, -BETA, BETA)]
+  dat[, `:=`(A1 = ref_a1, A2 = ref_a2)]
+  data.table::setorder(dat, reference_row)
+  manifest <- dat[, .(SNP, CHR, BP, A1, A2, BETA, SE, NMISS, P,
+                       GWAS_A1, beta_reversed)]
+  list(manifest = manifest, audit = audit)
+}
+```
+
+```{r common-variants}
+read_bim <- function(prefix) {
+  x <- fread(paste0(prefix, ".bim"), header = FALSE, colClasses = "character")
+  setnames(x, c("CHR", "SNP", "CM", "BP", "allele1", "allele2"))
+  x
+}
+# Subset the large reference with PLINK before reading its BIM into R.
+# This avoids importing variants that cannot enter either score.
+target_bim <- read_bim(geno_file)
+initial_ids <- intersect(EUR_sum$SNP, target_bim$SNP)
+if (!length(initial_ids)) stop("No shared summary and target SNP IDs.")
+initial_file <- file.path(run_dir, "initial_shared_ids.txt")
+writeLines(initial_ids, initial_file)
+initial_ref <- file.path(run_dir, "initial_reference")
+run_plink("1", c("--bfile", ref_data, "--extract", initial_file,
+                 "--keep-allele-order", "--make-bed", resource_args,
+                 "--out", initial_ref), "initial_reference_subset")
+ref_bim <- read_bim(initial_ref)
+prepared <- prepare_candidates(EUR_sum, ref_bim, target_bim)
+manifest <- prepared$manifest
+if (any(manifest$CHR != "22")) stop("This exercise expects chromosome 22 only.")
+if (!is.finite(params$ref_maf) || params$ref_maf <= 0 || params$ref_maf >= .5 ||
+    !is.finite(params$ref_geno) || params$ref_geno < 0 || params$ref_geno > 1) {
+  stop("Invalid reference QC parameters.")
+}
+candidate_file <- file.path(run_dir, "candidate_snps.txt")
+writeLines(manifest$SNP, candidate_file)
+common_ref <- file.path(run_dir, "common_reference")
+run_plink("1", c("--bfile", initial_ref, "--extract", candidate_file,
+                 "--maf", params$ref_maf, "--geno", params$ref_geno,
+                 "--keep-allele-order", "--make-bed", resource_args,
+                 "--out", common_ref), "reference_qc")
+common_bim <- read_bim(common_ref)
+if (!nrow(common_bim) || !all(common_bim$SNP %in% manifest$SNP)) {
+  stop("Unexpected reference subset.")
+}
+n_before_qc <- nrow(manifest)
+manifest <- manifest[match(common_bim$SNP, manifest$SNP)]
+stopifnot(identical(manifest$A1, common_bim$allele1),
+          identical(manifest$A2, common_bim$allele2),
+          all(diff(manifest$BP) > 0))
+audit <- rbind(prepared$audit, data.table(stage = "reference_qc",
+  reason = "Reference MAF and genotype missingness filters.",
+  before = n_before_qc, removed = n_before_qc - nrow(manifest),
+  retained = nrow(manifest)))
+fwrite(audit, file.path(run_dir, "variant_audit.tsv"), sep = "\t")
+fwrite(manifest, file.path(run_dir, "variant_manifest.tsv"), sep = "\t")
+common_sum_file <- file.path(run_dir, "common_summary.tsv")
+fwrite(manifest, common_sum_file, sep = "\t")
+knitr::kable(audit[, .(stage, before, removed, retained)])
+cat("Eligible variants:", nrow(manifest),
+    "\nReference individuals:", nrow(fread(paste0(common_ref, ".fam"))),
+    "\nEffects reversed to reference allele1:", sum(manifest$beta_reversed), "\n")
+```
+
+The reference MAF filter removes monomorphic and very rare reference variants;
+the genotype missingness filter limits missing calls. The LD matrix below uses
+pairwise complete reference genotypes. These choices are fixed before tuning.
+
+# LD clumping with PLINK 1.9
+
+Clumping selects a lead SNP and groups nearby SNPs correlated with it, starting
+with the smallest GWAS p-value. We use a **500 kb radius**, **LD \(r^2 = 0.1\)**,
+and `--clump-p1 1` so index SNPs across the p-value range can be considered.
+LD \(r^2\) measures correlation between variants and differs from
+the prediction \(R^2\) calculated later.
+
+```{r clump}
+clump_prefix <- file.path(run_dir, "LD_clump")
+run_plink("1", c("--bfile", common_ref, "--clump", common_sum_file,
+                 "--clump-p1", "1", "--clump-r2", params$clump_r2,
+                 "--clump-kb", params$clump_kb,
+                 resource_args, "--out", clump_prefix), "clumping")
+clump_file <- paste0(clump_prefix, ".clumped")
+if (!file.exists(clump_file)) stop("No clumps were produced; inspect the PLINK log.")
+LD_clump <- fread(clump_file)
+if (!"SNP" %in% names(LD_clump) || !nrow(LD_clump)) stop("No lead SNPs were found.")
+clumped <- manifest[match(LD_clump$SNP, manifest$SNP), .(SNP, A1, BETA, P)]
+if (anyNA(clumped)) stop("Clumped SNPs did not match the common variant pool.")
+prs_prep <- copy(clumped)
+cat("LD-clumped lead SNPs:", nrow(clumped), "\n")
+setorder(prs_prep, P, SNP)
+fwrite(prs_prep, file.path(run_dir, "clumped_score_candidates.tsv"), sep = "\t")
+knitr::kable(head(prs_prep)[, .(SNP, A1, BETA, P = format(P, scientific = TRUE))])
+```
+
+# Calculate PRS at nine p-value thresholds
+
+For each threshold, retain clumped SNPs with `P <= threshold` and write their
+`SNP`, `A1`, and `BETA` values. `header` skips the coefficient-file header;
+`1 2 3` identifies the input columns. `SCORE1_SUM` is the weighted allele sum.
+With `no-mean-imputation`, a missing genotype contributes no term to the sum. Missingness can affect scores in real data.
+
+All clumped lead SNPs come from the common eligible pool and should be scoreable.
+The code verifies the actual variants used by PLINK at every threshold.
+
+```{r score-thresholds}
+pthres <- c(5e-8, 5e-7, 5e-6, 5e-5, 5e-4, 5e-3, 5e-2, 5e-1, 1)
+performance <- data.table(threshold = pthres, n_lead_snps = 0L, n_scored_snps = 0L,
+                           tuning_R2 = NA_real_, status = "not scored")
+for (k in seq_along(pthres)) {
+  prs_coeff <- prs_prep[P <= pthres[k], .(SNP, A1, BETA)]
+  performance$n_lead_snps[k] <- sum(clumped$P <= pthres[k])
+  performance$n_scored_snps[k] <- nrow(prs_coeff)
+  if (!nrow(prs_coeff)) {
+    performance$status[k] <- "no SNPs at this threshold"
+    next
+  }
+  coefficient_file <- file.path(run_dir, paste0("prs_coeff_", k, ".tsv"))
+  score_prefix <- file.path(run_dir, paste0("prs_", k))
+  fwrite(prs_coeff, coefficient_file, sep = "\t")
+  run_plink("2", c("--bfile", geno_file,
+                   "--score", coefficient_file, "1", "2", "3", "header",
+                   "no-mean-imputation", "list-variants", "cols=+fid,+scoresums,-scoreavgs",
+                   resource_args, "--out", score_prefix), paste0("scoring_", k))
+  used_snps <- readLines(paste0(score_prefix, ".sscore.vars"))
+  if (!setequal(used_snps, prs_coeff$SNP)) stop("PLINK skipped scoring variants; inspect its log.")
+  performance$status[k] <- "scored"
+}
+knitr::kable(performance[, .(threshold = format(threshold, scientific = TRUE),
+                              n_lead_snps, n_scored_snps, status)])
+```
+
+# Select the threshold using the tuning set
+
+Read scores by **FID and IID**, and reorder them to match the outcome table.
+An empty SNP set or a constant score cannot be evaluated and is excluded from
+threshold selection. Validation outcomes are not used here.
+
+```{r tune}
+read_score_file <- function(path) {
+  scores <- fread(path,
+                   colClasses = "character")
+  setnames(scores, sub("^#", "", names(scores)))
+  if (!all(c("FID", "IID", "SCORE1_SUM") %in% names(scores))) {
+    stop("Missing expected columns in PLINK score output.")
+  }
+  key <- paste(scores$FID, scores$IID, sep = "\t")
+  expected_key <- paste(samples$FID, samples$IID, sep = "\t")
+  if (anyDuplicated(key) || !setequal(key, expected_key)) {
+    stop("Scored sample IDs do not match the outcomes.")
+  }
+  score <- as.numeric(scores$SCORE1_SUM[match(expected_key, key)])
+  if (any(!is.finite(score))) stop("Non-finite PRS values.")
+  score
+}
+read_scores <- function(k) read_score_file(file.path(run_dir, paste0("prs_", k, ".sscore")))
+tuning <- samples$cohort == "tuning"
+if (var(samples$y[tuning]) == 0) stop("The tuning outcome is constant.")
+for (k in which(performance$status == "scored")) {
+  score <- read_scores(k)
+  if (var(score[tuning]) == 0) {
+    performance$status[k] <- "constant tuning score"
+    next
+  }
+  model <- lm(y ~ PRS, data = data.frame(y = samples$y[tuning], PRS = score[tuning]))
+  performance$tuning_R2[k] <- summary(model)$r.squared
+}
+eligible <- which(is.finite(performance$tuning_R2))
+if (!length(eligible)) stop("No threshold produced an evaluable tuning score.")
+# Thresholds are ascending; a tie selects the smaller threshold.
+best_k <- eligible[which.max(performance$tuning_R2[eligible])]
+fwrite(performance, file.path(run_dir, "tuning_performance.tsv"), sep = "\t")
+performance_display <- copy(performance)
+performance_display[, threshold := format(threshold, scientific = TRUE)]
+knitr::kable(performance_display, digits = 6)
+plot(performance$threshold, performance$tuning_R2, log = "x", type = "b", pch = 16,
+     xlab = "GWAS p-value threshold", ylab = expression("Tuning " * R^2),
+     main = "Choose the threshold using the tuning set")
+points(performance$threshold[best_k], performance$tuning_R2[best_k],
+       pch = 19, col = "firebrick", cex = 1.5)
+```
+
+
+# Fit LDpred2 using the same data
+
+## What changes from C+T?
+
+C+T keeps selected marginal GWAS effects after clumping. LDpred2 models
+correlation between variants and estimates posterior effects under a prior
+that combines zero and nonzero effects. We keep correlated SNPs in the
+eligible pool and provide their LD matrix.
+
+For this exercise, fit a small, prespecified grid:
+
+| Parameter | Values | Meaning |
+|:---|:---|:---|
+| `p` | 0.01, 0.1 | Prior proportion of causal variants in the modeled pool |
+| `h2` | 0.01, 0.1 | Candidate proportion of phenotype variance explained by the modeled pool |
+| `sparse` | `FALSE` | Do not request the additional sparse solution |
+
+These `h2` values are teaching settings, not estimates of whole-genome
+heritability. A chromosome 22 subset cannot be assigned a whole-genome
+heritability without justification. The grid is deliberately small for the
+lab and must be fixed before examining validation outcomes. The four-model
+grid omits `p = 1` because its dense Gibbs updates are slow in this example.
+For an instructor extension, add `p = 1` before examining validation results
+and generate a new matching prepared backup.
+
+We use a 3,000 kb LD radius and shrink off-diagonal correlations by 0.95 to
+stabilize the small reference matrix. Physical distance is used because these
+files do not provide an appropriate genetic map. This is not a 3 cM window.
+For research, use the method's recommended LD resources, broader parameter
+search, and convergence checks. This small example does not establish that
+one method predicts better in general.
+
+## Choose live fitting or the prepared backup
+
+Keep these default YAML settings for the live classroom exercise:
+
+```yaml
+execute: true
+run_ldpred2: true
+ldpred_mode: "fit"
+rebuild_ld: false
+```
+
+Save any YAML edits before rerunning setup or knitting.
+The instructor supplies `06_PRS_1000G_LD.rds`, computed from the same 1000
+Genomes reference and eligible variants. Students load this LD matrix and
+run LDpred2; they do not calculate LD during class. Set `ld_file` to its path
+if it is stored elsewhere. A missing or incompatible LD file stops the fit
+instead of triggering a lengthy calculation.
+
+The two supplied RDS files have different purposes:
+
+| File | Contents | Classroom use |
+|:---|:---|:---|
+| `06_PRS_1000G_LD.rds` | LD matrix, ordered alleles, reference checksums, and settings | Input for fitting LDpred2 |
+| `06_PRS_LDpred2_prepared.rds` | Fitted weights and target scores, with matching metadata | Fallback that skips fitting and scoring |
+
+A successful fit saves
+`ldpred2_prepared.rds` in the run directory, including weights, scores, settings,
+input checksums, and software versions. The instructor can distribute that
+file as `06_PRS_LDpred2_prepared.rds`, together with this Rmd and the same
+input data.
+
+In the original instructor test, the LDpred2 section took about **6 minutes**,
+the full live document about **11 minutes**, and the prepared document about
+**4 minutes**. A later test on another Biowulf node was much faster; runtime
+varies with the node and storage. Allow up to ten minutes for the LD loading
+and fitting chunk during class.
+If it is still running at that point, stop the active
+chunk and wait for the Console prompt. Set `ldpred_mode: "prepared"` and
+`prepared_ldpred_file` to the instructor's RDS path, then **save the Rmd**.
+When running chunks, rerun `setup`, `ldpred-config`, `ldpred-fit`, and
+`ldpred-score-tune`, using the C+T results already in the current session.
+Then continue to validation and score comparison. In a fresh session, run
+all chunks or Knit.
+For a fresh prepared run, change **only** `ldpred_mode` to `"prepared"`, save,
+and run all chunks or Knit. Keep the model grid and data settings unchanged:
+the fallback checks the input files, variant order, settings, and sample IDs.
+It explicitly reports that results were loaded. It does not require the LD
+file, `bigsnpr`, or `bigsparser` to be installed. To run only C+T, set `run_ldpred2: false`.
+
+```{r ldpred-config, eval=params$execute && params$run_ldpred2}
+if (!params$ldpred_mode %in% c("fit", "prepared")) stop("Use fit or prepared mode.")
+if (!length(params$ldpred_p) || !length(params$ldpred_h2) || any(!is.finite(params$ldpred_p)) || any(params$ldpred_p <= 0 | params$ldpred_p > 1) ||
+    any(!is.finite(params$ldpred_h2)) || any(params$ldpred_h2 <= 0 | params$ldpred_h2 > 1) ||
+    !is.finite(params$ld_window_kb) || params$ld_window_kb <= 0 ||
+    !is.finite(params$ld_shrink) || params$ld_shrink <= 0 || params$ld_shrink > 1 ) stop("Invalid LDpred2 settings.")
+for (parameter in c("ldpred_burn_in", "ldpred_num_iter", "ldpred_seed")) {
+  value <- params[[parameter]]
+  if (length(value) != 1L || !is.numeric(value) || !is.finite(value) ||
+      value != floor(value) || value < 1 || value > .Machine$integer.max) {
+    stop(parameter, " must be a positive integer.")
+  }
+}
+# Do not name this table params: that name belongs to R Markdown's YAML list.
+ldpred_grid <- as.data.table(expand.grid(p = params$ldpred_p, h2 = params$ldpred_h2,
+                                        sparse = FALSE, KEEP.OUT.ATTRS = FALSE))
+ldpred_grid[, model := paste0("LD", seq_len(.N))]
+ldpred_settings <- params[c("ld_window_kb", "ld_shrink", "ref_maf", "ref_geno",
+                           "ldpred_p", "ldpred_h2", "ldpred_burn_in",
+                           "ldpred_num_iter", "ldpred_seed")]
+# Record the effective mode/settings when switching to the prepared fallback.
+saveRDS(params, file.path(run_dir, "parameters_effective.rds"))
+input_md5 <- unname(tools::md5sum(inputs))
+names(input_md5) <- c("summary", "ref_bed", "ref_bim", "ref_fam",
+                     "target_bed", "target_bim", "target_fam", "outcomes")
+knitr::kable(ldpred_grid)
+cat("LDpred2 mode:", params$ldpred_mode, "\n")
+```
+
+## Load the supplied LD matrix and estimate joint weights
+
+For the live exercise, inspect the four-row grid, run the fit, and then run
+the scoring and tuning chunk. Record the selected `p` and `h2` before opening
+the validation results. The preparation helper is supplied code; students
+do not need to rewrite it during the lab.
+
+The rows and columns of the LD matrix, summary-statistic rows, and genotype
+columns must have exactly the same order and allele coding. `bigsnpr` counts
+reference allele1; our manifest is aligned to that allele. The assertions
+below are part of the analysis, not optional checks.
+
+The supplied matrix already includes the stated 0.95 shrinkage. The loader
+checks this flag and the settings and does not apply shrinkage again.
+The optional instructor appendix shows how to rebuild this file before class.
+
+```{r ld-builder, include=FALSE, eval=params$execute && params$run_ldpred2}
+choose_ld_tempdir <- function(job_id = Sys.getenv("SLURM_JOB_ID"),
+                             scratch_root = "/lscratch") {
+  if (length(job_id) == 1L && !is.na(job_id) && grepl("^[0-9]+$", job_id)) {
+    scratch <- file.path(scratch_root, job_id)
+    if (dir.exists(scratch) && file.access(scratch, 2L) == 0L) {
+      probe <- tempfile("PRS_LD_write_test_", tmpdir = scratch)
+      if (isTRUE(suppressWarnings(file.create(probe)))) {
+        unlink(probe)
+        return(normalizePath(scratch))
+      }
+    }
+  }
+  tempdir()
+}
+
+validate_ld_bundle <- function(bundle, manifest, params, input_md5) {
+  expected_variants <- as.data.frame(manifest[, .(CHR, SNP, BP, A1, A2)])
+  expected_settings <- params[c("ld_window_kb", "ld_shrink", "ref_maf", "ref_geno")]
+  expected_reference <- input_md5[c("ref_bed", "ref_bim", "ref_fam")]
+  if (!is.list(bundle) || !identical(bundle$schema, 1L) ||
+      !identical(bundle$variants, expected_variants) ||
+      !identical(bundle$reference_md5, expected_reference) ||
+      !identical(bundle$settings, expected_settings) ||
+      !identical(bundle$shrinkage_applied, TRUE)) {
+    stop("The LD file does not match the reference, variants, alleles, or LD settings.")
+  }
+  if (!is.character(bundle$versions) ||
+      !all(c("bigsnpr", "bigsparser", "Matrix") %in% names(bundle$versions)) ||
+      anyNA(bundle$versions) || any(!nzchar(bundle$versions)) ||
+      !is.character(bundle$created) || length(bundle$created) != 1L ||
+      is.na(bundle$created) || !nzchar(bundle$created)) {
+    stop("The LD file is missing software-version or creation metadata.")
+  }
+  x <- bundle$corr
+  if (!inherits(x, "dsCMatrix") || !identical(x@uplo, "U") ||
+      !isTRUE(methods::validObject(x, test = TRUE)) ||
+      !identical(dim(x), c(nrow(manifest), nrow(manifest)))) {
+    stop("The LD file must contain a valid upper-triangle symmetric sparse matrix of the expected size.")
+  }
+  if (any(!is.finite(x@x)) || any(abs(x@x) > 1 + 1e-8) ||
+      any(abs(Matrix::diag(x) - 1) > 1e-8)) {
+    stop("The LD file contains invalid correlations or a non-unit diagonal.")
+  }
+  invisible(TRUE)
+}
+
+shrink_ld_offdiagonal <- function(corr_sparse, shrink) {
+  if (!inherits(corr_sparse, "dsCMatrix") || !identical(corr_sparse@uplo, "U") ||
+      length(shrink) != 1L || !is.numeric(shrink) || !is.finite(shrink) ||
+      shrink <= 0 || shrink > 1) stop("Invalid LD matrix or shrinkage factor.")
+  # In a valid upper-triangle CSC matrix, a stored diagonal is the final
+  # entry in its column. Check that every column has that unit diagonal.
+  diagonal_positions <- corr_sparse@p[-1L]
+  if (any(diff(corr_sparse@p) < 1L) ||
+      !identical(corr_sparse@i[diagonal_positions], seq_len(ncol(corr_sparse)) - 1L) ||
+      any(!is.finite(corr_sparse@x[diagonal_positions])) ||
+      any(abs(corr_sparse@x[diagonal_positions] - 1) > 1e-8)) {
+    stop("Expected a stored unit diagonal in every LD column.")
+  }
+  # Equivalent to shrink * R + (1 - shrink) * I without sparse addition.
+  corr_sparse@x <- shrink * corr_sparse@x
+  corr_sparse@x[diagonal_positions] <- 1
+  corr_sparse@factors <- list()
+  corr_sparse
+}
+
+build_ld_bundle <- function(common_ref, manifest, params, input_md5, threads, run_dir) {
+  genotype_rds <- bigsnpr::snp_readBed(paste0(common_ref, ".bed"),
+                                     backingfile = tempfile("reference_matrix_", tmpdir = run_dir))
+  reference <- bigsnpr::snp_attach(genotype_rds)
+  G <- reference$genotypes
+  stopifnot(identical(as.character(reference$map$marker.ID), manifest$SNP),
+            identical(as.character(reference$map$allele1), manifest$A1),
+            identical(as.character(reference$map$allele2), manifest$A2))
+  corr_sparse <- bigsnpr::snp_cor(G, size = params$ld_window_kb,
+                                 infos.pos = manifest$BP, ncores = threads)
+  rm(G, reference)
+  invisible(gc())
+  if (any(!is.finite(corr_sparse@x)) || any(abs(Matrix::diag(corr_sparse) - 1) > 1e-8)) {
+    stop("Invalid LD correlations; inspect reference genotypes.")
+  }
+  corr_sparse <- shrink_ld_offdiagonal(corr_sparse, params$ld_shrink)
+  invisible(gc())
+  bundle <- list(schema = 1L, corr = corr_sparse,
+    variants = as.data.frame(manifest[, .(CHR, SNP, BP, A1, A2)]),
+    reference_md5 = input_md5[c("ref_bed", "ref_bim", "ref_fam")],
+    settings = params[c("ld_window_kb", "ld_shrink", "ref_maf", "ref_geno")],
+    shrinkage_applied = TRUE,
+    versions = vapply(c("bigsnpr", "bigsparser", "Matrix"),
+                      function(pkg) as.character(packageVersion(pkg)), character(1)),
+    created = as.character(Sys.time()))
+  validate_ld_bundle(bundle, manifest, params, input_md5)
+  bundle
+}
+```
+
+```{r ldpred-fit, eval=params$execute && params$run_ldpred2}
+ldpred_timing <- data.table(step = character(), seconds = numeric())
+if (params$ldpred_mode == "prepared") {
+  backup_file <- path.expand(params$prepared_ldpred_file)
+  if (!nzchar(backup_file) || !file.exists(backup_file)) stop("Provide the prepared RDS file.")
+  backup <- readRDS(backup_file)
+  if (!identical(backup$schema, 1L) || !identical(backup$input_md5, input_md5) ||
+      !identical(backup$settings, ldpred_settings) ||
+      !identical(backup$manifest, as.data.frame(manifest)) ||
+      !identical(backup$grid, as.data.frame(ldpred_grid))) {
+    stop("Prepared results do not match these inputs, variants, or settings.")
+  }
+  ldpred_weights <- backup$weights
+  fit_status <- backup$fit_status
+  fit_versions <- backup$versions
+  ldpred_timing <- as.data.table(backup$timing)
+  cat("Loaded prepared LDpred2 weights and scores from:", backup_file, "\n")
+} else {
+  needed <- c("bigsnpr", "bigsparser", "Matrix")
+  missing <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
+  if (length(missing)) stop("Install before class: ", paste(missing, collapse = ", "),
+                            "; or switch to prepared mode.")
+  if (!is.character(params$ld_file) || length(params$ld_file) != 1L ||
+      is.na(params$ld_file) || !nzchar(params$ld_file)) stop("Set ld_file to the supplied LD RDS path.")
+  ld_path <- path.expand(params$ld_file)
+  if (isTRUE(params$rebuild_ld)) {
+    build_start <- proc.time()[["elapsed"]]
+    ld_bundle <- build_ld_bundle(common_ref, manifest, params, input_md5, threads, run_dir)
+    saveRDS(ld_bundle, ld_path)
+    ldpred_timing <- rbind(ldpred_timing, data.table(step = "Build LD (instructor only)",
+      seconds = proc.time()[["elapsed"]] - build_start))
+    cat("Saved instructor LD matrix:", ld_path, "\n")
+  }
+  if (!file.exists(ld_path)) {
+    stop("Missing precomputed LD file: ", ld_path,
+         ". Obtain it from the instructor or use prepared-score mode.")
+  }
+  ld_start <- proc.time()[["elapsed"]]
+  ld_bundle <- readRDS(ld_path)
+  validate_ld_bundle(ld_bundle, manifest, params, input_md5)
+  corr_sparse <- ld_bundle$corr  # Already shrunk; do not shrink a second time.
+  ld_tmpdir <- choose_ld_tempdir()
+  corr <- bigsparser::as_SFBM(corr_sparse,
+                            backingfile = tempfile("LD_matrix_", tmpdir = ld_tmpdir), compact = TRUE)
+  cat("Temporary LD backing file:", corr$sbk, "\n")
+  ldpred_timing <- rbind(ldpred_timing, data.table(step = "Load LD and create SFBM",
+                                                 seconds = proc.time()[["elapsed"]] - ld_start))
+  cat("Loaded precomputed LD for", nrow(corr_sparse), "variants from:", ld_path,
+      "\nLD created:", ld_bundle$created, "\n")
+  df_beta <- data.frame(beta = manifest$BETA, beta_se = manifest$SE,
+                        n_eff = manifest$NMISS)
+  fit_start <- proc.time()[["elapsed"]]
+  set.seed(params$ldpred_seed)
+  ldpred_weights <- bigsnpr::snp_ldpred2_grid(
+    corr, df_beta, grid_param = as.data.frame(ldpred_grid[, .(p, h2, sparse)]),
+    burn_in = params$ldpred_burn_in, num_iter = params$ldpred_num_iter,
+    ncores = threads)
+  ldpred_timing <- rbind(ldpred_timing, data.table(step = "LDpred2 fitting",
+                                                 seconds = proc.time()[["elapsed"]] - fit_start))
+  ldpred_weights <- as.matrix(ldpred_weights)
+  fit_status <- ifelse(colSums(!is.finite(ldpred_weights)) == 0, "finite weights", "nonfinite weights")
+  fit_versions <- vapply(needed, function(pkg) as.character(packageVersion(pkg)), character(1))
+}
+stopifnot(identical(dim(ldpred_weights), c(nrow(manifest), nrow(ldpred_grid))))
+fit_status <- ifelse(colSums(!is.finite(ldpred_weights)) == 0, "finite weights", "nonfinite weights")
+if (!any(fit_status == "finite weights")) stop("All LDpred2 fits failed.")
+colnames(ldpred_weights) <- ldpred_grid$model
+rownames(ldpred_weights) <- manifest$SNP
+knitr::kable(cbind(ldpred_grid, fit_status))
+```
+
+Nonfinite coefficients indicate a failed model and exclude it from tuning.
+Finite coefficients alone do not establish MCMC convergence. The short run is
+for teaching; a research analysis needs longer runs and stability assessment.
+In the supplied instructor backup, both `h2 = 0.1` candidates have nonfinite
+weights and are excluded. The two `h2 = 0.01` candidates can be scored.
+Inspect these statuses before selecting a model; an excluded candidate has
+zero scored SNPs and no tuning R-squared.
+
+## Score the target samples and tune LDpred2
+
+The score formula stays the same. We replace the marginal GWAS coefficients
+with LDpred2 posterior coefficients. PLINK uses the specified effect allele
+even when the target BIM lists its alleles in the opposite order. Both methods
+use `SCORE1_SUM` and the same missing-genotype policy.
+
+```{r ldpred-score-tune, eval=params$execute && params$run_ldpred2}
+score_start <- proc.time()[["elapsed"]]
+ldpred_scores <- matrix(NA_real_, nrow(samples), nrow(ldpred_grid),
+                         dimnames = list(NULL, ldpred_grid$model))
+if (params$ldpred_mode == "prepared") {
+  expected_key <- paste(samples$FID, samples$IID, sep = "\t")
+  saved_key <- paste(backup$scores$FID, backup$scores$IID, sep = "\t")
+  if (anyDuplicated(saved_key) || !setequal(saved_key, expected_key) ||
+      !all(ldpred_grid$model %in% names(backup$scores))) stop("Prepared scores have incompatible IDs.")
+  ldpred_scores[,] <- as.matrix(backup$scores[match(expected_key, saved_key), ldpred_grid$model, drop = FALSE])
+} else {
+  for (j in which(fit_status == "finite weights")) {
+    weights_file <- file.path(run_dir, paste0("ldpred2_weights_", j, ".tsv"))
+    score_prefix <- file.path(run_dir, paste0("ldpred2_", j))
+    fwrite(data.table(SNP = manifest$SNP, A1 = manifest$A1,
+                      BETA = ldpred_weights[, j]), weights_file, sep = "\t")
+    run_plink("2", c("--bfile", geno_file, "--score", weights_file, "1", "2", "3", "header",
+                     "no-mean-imputation", "list-variants", "cols=+fid,+scoresums,-scoreavgs",
+                     resource_args, "--out", score_prefix), paste0("ldpred2_scoring_", j))
+    if (!setequal(readLines(paste0(score_prefix, ".sscore.vars")), manifest$SNP)) {
+      stop("PLINK skipped an LDpred2 scoring variant.")
+    }
+    ldpred_scores[, j] <- read_score_file(paste0(score_prefix, ".sscore"))
+  }
+  ldpred_timing <- rbind(ldpred_timing, data.table(step = "Target scoring",
+    seconds = proc.time()[["elapsed"]] - score_start))
+}
+ldpred_performance <- copy(ldpred_grid)
+ldpred_performance[, `:=`(n_scored_snps = ifelse(fit_status == "finite weights", nrow(manifest), 0L),
+                          tuning_R2 = NA_real_, status = fit_status)]
+for (j in which(fit_status == "finite weights")) {
+  score <- ldpred_scores[, j]
+  if (any(!is.finite(score)) || var(score[tuning]) == 0) {
+    ldpred_performance$status[j] <- "invalid or constant score"
+    next
+  }
+  ldpred_performance$tuning_R2[j] <- cor(samples$y[tuning], score[tuning])^2
+  ldpred_performance$status[j] <- "evaluated"
+}
+eligible_ld <- which(is.finite(ldpred_performance$tuning_R2))
+if (!length(eligible_ld)) stop("No LDpred2 model is evaluable.")
+# A tie is resolved by the first row in the prespecified grid.
+best_ld <- eligible_ld[which.max(ldpred_performance$tuning_R2[eligible_ld])]
+fwrite(ldpred_performance, file.path(run_dir, "ldpred2_tuning_performance.tsv"), sep = "\t")
+knitr::kable(ldpred_performance, digits = 6)
+knitr::kable(ldpred_timing, digits = 2,
+              caption = if (params$ldpred_mode == "fit") "Measured live runtime" else "Runtime recorded in prepared results")
+if (params$ldpred_mode == "fit") {
+  backup <- list(schema = 1L, input_md5 = input_md5, settings = ldpred_settings,
+                 manifest = as.data.frame(manifest), grid = as.data.frame(ldpred_grid),
+                 weights = ldpred_weights, scores = data.frame(samples[, .(FID, IID)], ldpred_scores),
+                 fit_status = fit_status, timing = as.data.frame(ldpred_timing),
+                 versions = fit_versions, created = as.character(Sys.time()))
+  saveRDS(backup, file.path(run_dir, "ldpred2_prepared.rds"))
+  cat("Backup created:", file.path(run_dir, "ldpred2_prepared.rds"), "\n")
+}
+```
+
+# Compare the selected scores in the validation set
+
+Freeze one C+T threshold and one LDpred2 setting using tuning outcomes only.
+Evaluate each once in the validation set. Do not expand the grid or change
+QC settings after inspecting this table. Reporting both prespecified methods
+is different from selecting a new model using the validation outcomes.
+
+For one score and an intercept, the validation regression \(R^2\) equals
+squared Pearson correlation. This measures association in held-out samples.
+It does not test calibration of a prediction equation frozen in the tuning set.
+The analysis is unadjusted because this is a simulated teaching example.
+
+```{r validate}
+validation <- samples$cohort == "validation"
+best_score <- read_scores(best_k)
+validation_r2 <- function(score) {
+  if (any(!is.finite(score)) || var(samples$y[validation]) == 0 || var(score[validation]) == 0) {
+    stop("Validation R-squared is undefined for invalid or constant data.")
+  }
+  cor(samples$y[validation], score[validation])^2
+}
+comparison <- data.table(method = "C+T", mode = "live scoring",
+  selected_setting = paste0("P <= ", format(pthres[best_k], scientific = TRUE)),
+  n_scored_snps = performance$n_scored_snps[best_k],
+  tuning_n = sum(tuning), tuning_R2 = performance$tuning_R2[best_k],
+  validation_n = sum(validation), validation_R2 = validation_r2(best_score))
+selected_scores <- data.table(samples[, .(FID, IID, cohort)], CT = best_score)
+if (isTRUE(params$run_ldpred2)) {
+  best_ld_score <- ldpred_scores[, best_ld]
+  comparison <- rbind(comparison, data.table(method = "LDpred2", mode = params$ldpred_mode,
+    selected_setting = paste0("p = ", ldpred_grid$p[best_ld], "; h2 = ", ldpred_grid$h2[best_ld]),
+    n_scored_snps = nrow(manifest), tuning_n = sum(tuning),
+    tuning_R2 = ldpred_performance$tuning_R2[best_ld], validation_n = sum(validation),
+    validation_R2 = validation_r2(best_ld_score)))
+  selected_scores[, LDpred2 := best_ld_score]
+}
+fwrite(comparison, file.path(run_dir, "method_comparison.tsv"), sep = "\t")
+fwrite(selected_scores, file.path(run_dir, "selected_scores.tsv"), sep = "\t")
+knitr::kable(comparison, digits = 6)
+barplot(rbind(comparison$tuning_R2, comparison$validation_R2), beside = TRUE,
+        names.arg = comparison$method, col = c("steelblue", "darkorange"),
+        ylab = expression(R^2), legend.text = c("Tuning", "Validation"),
+        args.legend = list(x = "topright", bty = "n"),
+        main = "Performance of the selected scores")
+```
+
+```{r score-comparison, eval=params$execute && params$run_ldpred2}
+standardize_from_tuning <- function(x) (x - mean(x[tuning])) / sd(x[tuning])
+plot(standardize_from_tuning(best_score)[validation],
+     standardize_from_tuning(best_ld_score)[validation], pch = 16,
+     col = grDevices::adjustcolor("steelblue", alpha.f = 0.15),
+     xlab = "C+T PRS (tuning SD units)", ylab = "LDpred2 PRS (tuning SD units)",
+     main = "Do the methods rank individuals similarly?")
+cat("Correlation between validation scores:",
+    round(cor(best_score[validation], best_ld_score[validation]), 4), "\n")
+```
+
+## Reproduction checks
+
+After freezing the selected settings and running validation, compare your
+results with the tested example:
+
+| Method | Selected setting | Scored SNPs | Validation R-squared |
+|:---|:---|---:|---:|
+| C+T | P <= 0.0005 | 32 | 0.001808344 |
+| LDpred2 | p = 0.01; h2 = 0.01 | 23,552 | 0.002521289 |
+
+Both use 10,000 tuning samples and 10,000 separate validation samples.
+These are reproduction checks, not a general method ranking. Do not change
+the grid to obtain these numbers or after looking at validation results.
+Report different behavior or additional errors to the instructor.
+
+## Discussion questions
+
+1. How does C+T's SNP count change across p-value thresholds?
+2. What information does LDpred2 use that C+T discards during clumping?
+3. Which `p` and `h2` combination was selected in the tuning set? Does that
+   establish the true causal fraction or heritability? Explain why not.
+4. Do the selected scores rank individuals similarly? Why can performance
+   differ even when the same input files and sample split are used?
+5. Why would selecting settings using validation outcomes give an optimistic
+   performance estimate?
+6. What could change with a larger LD reference, all chromosomes, covariates,
+   or an ancestry-mismatched discovery or reference population?
+
+This chromosome 22 exercise illustrates two workflows. The small European
+reference and restricted variant set limit generalization. Neither result is
+an estimate of clinical performance, and LDpred2 is not guaranteed to outperform
+C+T in this example. PRS-CS can be discussed as another LD-aware Bayesian
+method, without adding a third software workflow to this 90-minute lab.
+
+# Optional instructor appendix: build the LD input before class
+
+This step is outside the 90-minute lab. It calculates LD from the same
+reference individuals and the complete eligible variant pool used above.
+No variants are removed merely to shorten the classroom exercise.
+
+To create or replace the LD input, set `ldpred_mode: "fit"`,
+`rebuild_ld: true`, and `ld_file` to the desired output path in the YAML
+header. Save the Rmd and run it from the start. The `ldpred-fit` chunk calls
+the builder below, saves the portable sparse matrix and metadata, and
+continues with fitting and scoring. The parent directory of `ld_file` must
+already exist. Rebuilding can take substantially longer than fitting.
+
+After a successful instructor run, restore `rebuild_ld: false` and save the
+Rmd before distributing it. Provide the saved LD file and the prepared-score
+backup, renamed as shown above. Test the default loading path in a fresh
+session. Both files must match the supplied data and analysis settings.
+
+The portable LD file contains matrix values and metadata, without paths to
+the instructor's temporary genotype or SFBM files. Each student creates an
+SFBM after loading it. On Biowulf, the code uses the job's
+`/lscratch/<SLURM_JOB_ID>` directory when it exists and passes a write check.
+This also works when RStudio's `tempdir()` was initialized elsewhere. Request
+local scratch when launching RStudio. If no writable job scratch directory is
+available, the code uses the R session's temporary directory instead. The
+output prints the temporary LD file's location. These temporary files are not
+part of the distributed LD input. Software versions record
+how LD was calculated; they are not required to equal the student's versions.
+
+```{r ld-builder-example, ref.label='ld-builder', eval=FALSE, echo=TRUE, include=TRUE}
+```
+
+# Record the software environment
+
+```{r session-info}
+writeLines(capture.output(sessionInfo()), file.path(run_dir, "sessionInfo.txt"))
+sessionInfo()
+cat("Saved results:", run_dir, "\n")
+```
+
+Results are from the current run. PLINK `.log` files and `.console.log` files
+contain variant counts, warnings, and versions; `.sh` files record the commands.
+`parameters.rds` records the initial run configuration; `parameters_effective.rds`
+records the current LDpred2 configuration, including an interactive switch to
+prepared mode.
+
+If something fails, send the instructor the **chunk name**, **exact error or
+warning**, your R/package versions from `sessionInfo()`, and the relevant log
+from the printed run directory. You do not need to send raw genotype files.
+
+Documentation: [PLINK 1.9 clumping](https://www.cog-genomics.org/plink/1.9/postproc#clump),
+[PLINK 2 scoring](https://www.cog-genomics.org/plink/2.0/score), and
+[Biowulf PLINK modules](https://hpc.nih.gov/apps/plink.html).
+LDpred2: [official tutorial](https://privefl.github.io/bigsnpr/articles/LDpred2.html),
+[function reference](https://privefl.github.io/bigsnpr/reference/LDpred2.html),
+[LD calculation](https://privefl.github.io/bigsnpr/reference/snp_cor.html), and
+[original paper](https://doi.org/10.1093/bioinformatics/btaa1029).

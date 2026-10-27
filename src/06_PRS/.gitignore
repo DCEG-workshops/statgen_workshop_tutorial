@@ -1,0 +1,14 @@
+# Large precomputed input distributed as a GitHub release asset.
+/06_PRS_1000G_LD.rds
+# Per-user installation, analysis outputs, and render intermediates.
+/06_PRS_R_library/
+/06_PRS_R_binary_library/
+/06_PRS_results/
+/06_PRS_LDpred2.html
+/06_PRS.preview.html
+/*.knit.md
+/*.utf8.md
+/06_PRS_LDpred2_files/
+/.Rhistory
+/.RData
+/.Rproj.user/
