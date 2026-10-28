@@ -19,7 +19,7 @@ params:
   clump_r2: 0.1
   clump_kb: 500
   run_ldpred2: true
-  ldpred_mode: "fit"
+  ldpred_mode: "prepared"
   prepared_ldpred_file: "06_PRS_LDpred2_prepared.rds"
   ld_file: "06_PRS_1000G_LD.rds"
   rebuild_ld: false
@@ -66,16 +66,16 @@ We will:
 1. Use PLINK 1.9 to select approximately independent variants by LD clumping.
 2. Use PLINK 2 to calculate a PRS at nine GWAS p-value thresholds.
 3. Select a threshold using 10,000 tuning samples.
-4. Fit four LDpred2 models using the same input data and select one in the tuning set.
+4. Compare four LDpred2 candidates using prepared results by default, and select one in the tuning set.
 5. Compare the two selected scores in 10,000 separate validation samples.
 
 Suggested 90-minute schedule: setup (10 minutes), C+T (30), tuning discussion
 (10), LDpred2 (20), comparison (15), and buffer (5). Instructors should install
 packages, precompute the LD matrix, and run this document before class.
-Students fit the small example using the supplied LD matrix; prepared scores
-are the fallback if fitting cannot finish during class. Complete the session
-launch, file download, package installation, and shared-data access check before
-the lab. During class, run chunks in order **or** Knit; doing both repeats the
+Students start with **prepared LDpred2 results**. Optional live fitting uses
+the supplied LD matrix; switch `ldpred_mode` to `"fit"` to try it. Complete the
+session launch, required package checks, and shared-data access check before
+the lab. Download the LD matrix beforehand only if you plan to fit live. During class, run chunks in order **or** Knit; doing both repeats the
 analysis. The preparation helpers are supplied code, not exercises to rewrite.
 
 For individual \(i\), the score is
@@ -112,9 +112,15 @@ report `06_PRS_LDpred2.prepared.html`, and the prepared-score backup
 `06_PRS_LDpred2_prepared.rds`. Open the HTML in a browser if you want to review
 the finished tutorial before running it.
 
-Download the supplied LD matrix once, **before class**, in the **Terminal**
-from `src/06_PRS/`. It is a 276 MiB GitHub release asset, so cloning alone does
-not download it. This copies the precomputed matrix; it does not calculate LD.
+**Prepared mode is the default** and uses the included
+`06_PRS_LDpred2_prepared.rds`; it does not need the LD matrix or a download.
+
+For optional live fitting, the `ldpred-fit` chunk automatically downloads `06_PRS_1000G_LD.rds`
+from GitHub if it is missing, then reuses the local file on later runs. Keep
+`ld_file: "06_PRS_1000G_LD.rds"` for this behavior. The 276 MiB file is a
+release asset, so cloning alone does not include it. To avoid download time
+during class, you can fetch it beforehand in the **Terminal** from `src/06_PRS/`:
+this downloads the supplied matrix; it does not calculate LD.
 
 ```bash
 curl --fail --location --retry 3 \
@@ -142,6 +148,11 @@ Setup reads the saved file. Knit supplies `params`
 automatically and respects overrides passed to `rmarkdown::render()`.
 
 ## Install and check R packages before class
+
+Default prepared mode needs `data.table`, `knitr`, `rmarkdown`, and `Matrix`.
+The tested Biowulf R 4.6 module provides these core packages. The installation
+block below is for **optional live fitting**; skip it for prepared mode when
+the four core packages are already available.
 
 Run this code once in the RStudio **Console**, with the working directory set
 to `src/06_PRS/`. Both `bigsnpr` and `bigsparser` need to be installed for live
@@ -660,7 +671,7 @@ points(performance$threshold[best_k], performance$tuning_R2[best_k],
 ```
 
 
-# Fit LDpred2 using the same data
+# Compare LDpred2 using the same data
 
 ## What changes from C+T?
 
@@ -669,7 +680,7 @@ correlation between variants and estimates posterior effects under a prior
 that combines zero and nonzero effects. We keep correlated SNPs in the
 eligible pool and provide their LD matrix.
 
-For this exercise, fit a small, prespecified grid:
+This exercise uses a small, prespecified grid:
 
 | Parameter | Values | Meaning |
 |:---|:---|:---|
@@ -692,30 +703,34 @@ For research, use the method's recommended LD resources, broader parameter
 search, and convergence checks. This small example does not establish that
 one method predicts better in general.
 
-## Choose live fitting or the prepared backup
+## Choose prepared results or live fitting
 
-Keep these default YAML settings for the live classroom exercise:
+Keep these default YAML settings to use the prepared LDpred2 results:
 
 ```yaml
 execute: true
 run_ldpred2: true
-ldpred_mode: "fit"
+ldpred_mode: "prepared"
 rebuild_ld: false
 ```
 
-Save any YAML edits before rerunning setup or knitting.
-The instructor supplies `06_PRS_1000G_LD.rds`, computed from the same 1000
+Save any YAML edits before rerunning setup or knitting. The default loads
+prepared weights and scores; C+T still runs live. To fit LDpred2 yourself,
+change **only** `ldpred_mode` to `"fit"` and install the fitting packages above.
+
+For optional live fitting, the instructor supplies `06_PRS_1000G_LD.rds`, computed from the same 1000
 Genomes reference and eligible variants. Students load this LD matrix and
 run LDpred2; they do not calculate LD during class. Set `ld_file` to its path
-if it is stored elsewhere. A missing or incompatible LD file stops the fit
-instead of triggering a lengthy calculation.
+if it is stored elsewhere. A missing default file is downloaded from the
+GitHub release; a missing custom path or an incompatible file stops the fit.
+LD is never calculated unless you explicitly set `rebuild_ld: true`.
 
 The two supplied RDS files have different purposes:
 
 | File | Contents | Classroom use |
 |:---|:---|:---|
-| `06_PRS_1000G_LD.rds` | LD matrix, ordered alleles, reference checksums, and settings | Input for fitting LDpred2 |
-| `06_PRS_LDpred2_prepared.rds` | Fitted weights and target scores, with matching metadata | Fallback that skips fitting and scoring |
+| `06_PRS_1000G_LD.rds` | LD matrix, ordered alleles, reference checksums, and settings | Input for optional live fitting |
+| `06_PRS_LDpred2_prepared.rds` | Fitted weights and target scores, with matching metadata | Default; skips LDpred2 fitting and scoring |
 
 A successful fit saves
 `ldpred2_prepared.rds` in the run directory, including weights, scores, settings,
@@ -735,8 +750,9 @@ When running chunks, rerun `setup`, `ldpred-config`, `ldpred-fit`, and
 `ldpred-score-tune`, using the C+T results already in the current session.
 Then continue to validation and score comparison. In a fresh session, run
 all chunks or Knit.
-For a fresh prepared run, change **only** `ldpred_mode` to `"prepared"`, save,
-and run all chunks or Knit. Keep the model grid and data settings unchanged:
+For a fresh prepared run, keep the default `ldpred_mode: "prepared"` and run
+all chunks or Knit. If switching back from live fitting, change only that mode
+and save. Keep the model grid and data settings unchanged:
 the fallback checks the input files, variant order, settings, and sample IDs.
 It explicitly reports that results were loaded. It does not require the LD
 file, `bigsnpr`, or `bigsparser` to be installed. To run only C+T, set `run_ldpred2: false`.
@@ -915,6 +931,24 @@ if (params$ldpred_mode == "prepared") {
     ldpred_timing <- rbind(ldpred_timing, data.table(step = "Build LD (instructor only)",
       seconds = proc.time()[["elapsed"]] - build_start))
     cat("Saved instructor LD matrix:", ld_path, "\n")
+  }
+  if (!file.exists(ld_path) && identical(params$ld_file, "06_PRS_1000G_LD.rds")) {
+    # Download the supplied matrix once; keep incomplete downloads out of the cache.
+    (function() {
+      old_options <- options(timeout = max(600, getOption("timeout")))
+      on.exit(options(old_options), add = TRUE)
+      download_path <- tempfile("LD_download_", tmpdir = dirname(ld_path), fileext = ".rds")
+      on.exit(unlink(download_path), add = TRUE)
+      cat("Downloading supplied LD matrix from GitHub...\n")
+      download.file(
+        "https://github.com/DCEG-workshops/statgen_workshop_tutorial/releases/download/prs-tutorial-2026-10-27/06_PRS_1000G_LD.rds",
+        destfile = download_path, mode = "wb")
+      expected_sha256 <- "49705b768abc564e361f64f4de5384b9d90a64ec11d65a2fe9cacfefff78c35a"
+      if (!identical(digest::digest(file = download_path, algo = "sha256"), expected_sha256)) {
+        stop("Downloaded LD checksum mismatch; retry or use prepared mode.")
+      }
+      if (!file.rename(download_path, ld_path)) stop("Cannot save downloaded LD file: ", ld_path)
+    })()
   }
   if (!file.exists(ld_path)) {
     stop("Missing precomputed LD file: ", ld_path,
@@ -1131,10 +1165,10 @@ the builder below, saves the portable sparse matrix and metadata, and
 continues with fitting and scoring. The parent directory of `ld_file` must
 already exist. Rebuilding can take substantially longer than fitting.
 
-After a successful instructor run, restore `rebuild_ld: false` and save the
-Rmd before distributing it. Provide the saved LD file and the prepared-score
-backup, renamed as shown above. Test the default loading path in a fresh
-session. Both files must match the supplied data and analysis settings.
+After a successful instructor run, restore `rebuild_ld: false` and
+`ldpred_mode: "prepared"`, then save the Rmd before distributing it. Provide the saved LD file and the prepared-score
+backup, renamed as shown above. Test both prepared mode and optional live
+loading in a fresh session. Both files must match the supplied data and analysis settings.
 
 The portable LD file contains matrix values and metadata, without paths to
 the instructor's temporary genotype or SFBM files. Each student creates an
