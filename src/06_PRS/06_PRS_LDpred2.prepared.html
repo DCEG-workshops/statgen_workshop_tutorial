@@ -468,9 +468,10 @@ Biowulf</h3>
 <li><a href="#get-your-own-copy" id="toc-get-your-own-copy"><span class="toc-section-number">2.1</span> Get your own copy</a></li>
 <li><a href="#install-and-check-r-packages-before-class" id="toc-install-and-check-r-packages-before-class"><span class="toc-section-number">2.2</span> Install and check R packages
 before class</a></li>
-<li><a href="#input-files-and-output-directory" id="toc-input-files-and-output-directory"><span class="toc-section-number">2.3</span> Input files and output
+<li><a href="#initialize-parameters" id="toc-initialize-parameters"><span class="toc-section-number">2.3</span> Initialize parameters</a></li>
+<li><a href="#input-files-and-output-directory" id="toc-input-files-and-output-directory"><span class="toc-section-number">2.4</span> Input files and output
 directory</a></li>
-<li><a href="#run-plink-from-r" id="toc-run-plink-from-r"><span class="toc-section-number">2.4</span> Run PLINK from R</a></li>
+<li><a href="#run-plink-from-r" id="toc-run-plink-from-r"><span class="toc-section-number">2.5</span> Run PLINK from R</a></li>
 </ul></li>
 <li><a href="#inspect-the-summary-statistics-and-outcomes" id="toc-inspect-the-summary-statistics-and-outcomes"><span class="toc-section-number">3</span> Inspect the summary statistics and
 outcomes</a></li>
@@ -601,13 +602,11 @@ Location</strong> before installing packages or running individual
 chunks. The Terminal’s <code>cd</code> command does not change R’s
 working directory. Install the packages below before running setup or
 clicking <strong>Knit</strong>.</p>
-<p>Run the <strong>setup</strong> chunk first when running chunks
-interactively. It reads the YAML defaults into <code>params</code>,
-preventing <code>object &#39;params&#39; not found</code>. Change parameters in
-the YAML header and <strong>save the file</strong> before running setup.
-Setup reads the saved file. Knit supplies <code>params</code>
-automatically and respects overrides passed to
-<code>rmarkdown::render()</code>.</p>
+<p>Run <strong>setup</strong> in the <strong>Initialize
+parameters</strong> section below before any analysis chunk. The YAML
+header is configuration, not an executable R chunk; setup loads its
+values into <code>params</code>. Then run the remaining chunks in order,
+or click <strong>Knit</strong> to run the whole document.</p>
 </div>
 <div id="install-and-check-r-packages-before-class" class="section level2" number="2.2">
 <h2><span class="header-section-number">2.2</span> Install and check R
@@ -666,8 +665,42 @@ Rscript -e &#39;.libPaths(c(normalizePath(&quot;06_PRS_R_library&quot;, mustWork
 <pre class="r"><code>rmarkdown::render(&quot;06_PRS_LDpred2.Rmd&quot;, params = list(execute = FALSE),
                   output_file = &quot;06_PRS.preview.html&quot;)</code></pre>
 </div>
-<div id="input-files-and-output-directory" class="section level2" number="2.3">
-<h2><span class="header-section-number">2.3</span> Input files and
+<div id="initialize-parameters" class="section level2" number="2.3">
+<h2><span class="header-section-number">2.3</span> Initialize
+parameters</h2>
+<p><strong>Run this setup chunk first in every fresh R session.</strong>
+Click its green Run button, then continue with the chunks below in
+order. Later chunks depend on <code>params</code> and other objects
+created by earlier chunks.</p>
+<p>Save any YAML edits before running setup: it reads the saved Rmd. The
+default confirmation is
+<code>Parameters loaded. LDpred2 mode: prepared</code>. If you see
+<code>object &#39;params&#39; not found</code>, run setup before continuing.
+Knit supplies the parameters automatically, including overrides passed
+to <code>rmarkdown::render()</code>.</p>
+<pre class="r"><code># Activate the project library before loading knitr for interactive YAML parsing.
+project_libraries &lt;- c(&quot;06_PRS_R_binary_library&quot;, &quot;06_PRS_R_library&quot;)
+.libPaths(c(normalizePath(project_libraries[dir.exists(project_libraries)]), .libPaths()))
+# Knit creates params from YAML. Running chunks directly does not.
+# Reload defaults for an interactive run, including after opening an older version.
+if (!isTRUE(getOption(&quot;knitr.in.progress&quot;))) {
+  input &lt;- if (file.exists(&quot;06_PRS_LDpred2.Rmd&quot;)) &quot;06_PRS_LDpred2.Rmd&quot; else &quot;06_PRS.Rmd&quot;
+  if (!file.exists(input)) stop(&quot;Set the working directory to the source file location.&quot;)
+  params &lt;- lapply(knitr::knit_params(readLines(input), evaluate = TRUE), function(x) x$value)
+}
+for (flag in c(&quot;execute&quot;, &quot;run_ldpred2&quot;, &quot;rebuild_ld&quot;)) {
+  if (!is.logical(params[[flag]]) || length(params[[flag]]) != 1L || is.na(params[[flag]])) {
+    stop(flag, &quot; must be true or false in YAML.&quot;)
+  }
+}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, warning = TRUE,
+                     message = FALSE, cache = FALSE, eval = params$execute,
+                     fig.width = 7, fig.height = 4.5)
+cat(&quot;Parameters loaded. LDpred2 mode:&quot;, params$ldpred_mode, &quot;\n&quot;)</code></pre>
+<pre><code>## Parameters loaded. LDpred2 mode: prepared</code></pre>
+</div>
+<div id="input-files-and-output-directory" class="section level2" number="2.4">
+<h2><span class="header-section-number">2.4</span> Input files and
 output directory</h2>
 <p>The <code>data_dir</code> parameter points directly to the shared
 Biowulf folder
@@ -808,10 +841,10 @@ knitr::kable(data.frame(input = sub(paste0(data_dir, &quot;/&quot;), &quot;&quot
 </tbody>
 </table>
 <pre class="r"><code>cat(&quot;Results directory:&quot;, run_dir, &quot;\n&quot;)</code></pre>
-<pre><code>## Results directory: /vf/users/wongs6/statgen_workshop_2026/PRS_tutorial_Wendy_2026-10-27/publishing/ld_download_fix_2026-10-28/default_prepared_results/run_20261028_105913_251bab276b3174</code></pre>
+<pre><code>## Results directory: /vf/users/wongs6/statgen_workshop_2026/PRS_tutorial_Wendy_2026-10-27/publishing/interactive_setup_2026-10-28/prepared_results/run_20261028_110801_2526d71a729ffa</code></pre>
 </div>
-<div id="run-plink-from-r" class="section level2" number="2.4">
-<h2><span class="header-section-number">2.4</span> Run PLINK from R</h2>
+<div id="run-plink-from-r" class="section level2" number="2.5">
+<h2><span class="header-section-number">2.5</span> Run PLINK from R</h2>
 <p>This helper loads the appropriate Biowulf module in a child shell,
 records the command and its output, and stops if PLINK fails. Switching
 PLINK versions does not change the RStudio environment.</p>
@@ -2187,7 +2220,7 @@ sessionInfo()</code></pre>
 ## [13] compiler_4.6.1  tools_4.6.1     evaluate_1.0.5  bslib_0.12.0
 ## [17] yaml_2.3.12     otel_0.2.0      rlang_1.3.0     jsonlite_2.0.0</code></pre>
 <pre class="r"><code>cat(&quot;Saved results:&quot;, run_dir, &quot;\n&quot;)</code></pre>
-<pre><code>## Saved results: /vf/users/wongs6/statgen_workshop_2026/PRS_tutorial_Wendy_2026-10-27/publishing/ld_download_fix_2026-10-28/default_prepared_results/run_20261028_105913_251bab276b3174</code></pre>
+<pre><code>## Saved results: /vf/users/wongs6/statgen_workshop_2026/PRS_tutorial_Wendy_2026-10-27/publishing/interactive_setup_2026-10-28/prepared_results/run_20261028_110801_2526d71a729ffa</code></pre>
 <p>Results are from the current run. PLINK <code>.log</code> files and
 <code>.console.log</code> files contain variant counts, warnings, and
 versions; <code>.sh</code> files record the commands.

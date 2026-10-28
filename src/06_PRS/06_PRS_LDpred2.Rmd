@@ -34,27 +34,6 @@ params:
   ldpred_seed: 20261027
 ---
 
-```{r setup, include=FALSE}
-# Activate the project library before loading knitr for interactive YAML parsing.
-project_libraries <- c("06_PRS_R_binary_library", "06_PRS_R_library")
-.libPaths(c(normalizePath(project_libraries[dir.exists(project_libraries)]), .libPaths()))
-# Knit creates params from YAML. Running chunks directly does not.
-# Reload defaults for an interactive run, including after opening an older version.
-if (!isTRUE(getOption("knitr.in.progress"))) {
-  input <- if (file.exists("06_PRS_LDpred2.Rmd")) "06_PRS_LDpred2.Rmd" else "06_PRS.Rmd"
-  if (!file.exists(input)) stop("Set the working directory to the source file location.")
-  params <- lapply(knitr::knit_params(readLines(input), evaluate = TRUE), function(x) x$value)
-}
-for (flag in c("execute", "run_ldpred2", "rebuild_ld")) {
-  if (!is.logical(params[[flag]]) || length(params[[flag]]) != 1L || is.na(params[[flag]])) {
-    stop(flag, " must be true or false in YAML.")
-  }
-}
-knitr::opts_chunk$set(echo = TRUE, error = FALSE, warning = TRUE,
-                     message = FALSE, cache = FALSE, eval = params$execute,
-                     fig.width = 7, fig.height = 4.5)
-```
-
 # Overview
 
 This practical introduces polygenic risk scores using chromosome 22 GWAS
@@ -141,11 +120,10 @@ Location** before installing packages or running individual chunks. The
 Terminal's `cd` command does not change R's working directory. Install the
 packages below before running setup or clicking **Knit**.
 
-Run the **setup** chunk first when running chunks interactively. It reads the
-YAML defaults into `params`, preventing `object 'params' not found`. Change
-parameters in the YAML header and **save the file** before running setup.
-Setup reads the saved file. Knit supplies `params`
-automatically and respects overrides passed to `rmarkdown::render()`.
+Run **setup** in the **Initialize parameters** section below before any
+analysis chunk. The YAML header is configuration, not an executable R chunk;
+setup loads its values into `params`. Then run the remaining chunks in order,
+or click **Knit** to run the whole document.
 
 ## Install and check R packages before class
 
@@ -205,6 +183,39 @@ To create a code-only preview without running the analyses:
 ```r
 rmarkdown::render("06_PRS_LDpred2.Rmd", params = list(execute = FALSE),
                   output_file = "06_PRS.preview.html")
+```
+
+## Initialize parameters
+
+**Run this setup chunk first in every fresh R session.** Click its green Run
+button, then continue with the chunks below in order. Later chunks depend on
+`params` and other objects created by earlier chunks.
+
+Save any YAML edits before running setup: it reads the saved Rmd. The default
+confirmation is `Parameters loaded. LDpred2 mode: prepared`. If you see
+`object 'params' not found`, run setup before continuing. Knit supplies the
+parameters automatically, including overrides passed to `rmarkdown::render()`.
+
+```{r setup, eval=TRUE}
+# Activate the project library before loading knitr for interactive YAML parsing.
+project_libraries <- c("06_PRS_R_binary_library", "06_PRS_R_library")
+.libPaths(c(normalizePath(project_libraries[dir.exists(project_libraries)]), .libPaths()))
+# Knit creates params from YAML. Running chunks directly does not.
+# Reload defaults for an interactive run, including after opening an older version.
+if (!isTRUE(getOption("knitr.in.progress"))) {
+  input <- if (file.exists("06_PRS_LDpred2.Rmd")) "06_PRS_LDpred2.Rmd" else "06_PRS.Rmd"
+  if (!file.exists(input)) stop("Set the working directory to the source file location.")
+  params <- lapply(knitr::knit_params(readLines(input), evaluate = TRUE), function(x) x$value)
+}
+for (flag in c("execute", "run_ldpred2", "rebuild_ld")) {
+  if (!is.logical(params[[flag]]) || length(params[[flag]]) != 1L || is.na(params[[flag]])) {
+    stop(flag, " must be true or false in YAML.")
+  }
+}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, warning = TRUE,
+                     message = FALSE, cache = FALSE, eval = params$execute,
+                     fig.width = 7, fig.height = 4.5)
+cat("Parameters loaded. LDpred2 mode:", params$ldpred_mode, "\n")
 ```
 
 ```{r preview-label, eval=TRUE, echo=FALSE, results='asis'}

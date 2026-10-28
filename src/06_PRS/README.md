@@ -25,6 +25,6 @@ The 276 MiB LD file is a release asset and is not included by `git clone`. Check
 | `06_PRS_1000G_LD.rds` | Precomputed LD input, downloaded from the release |
 | `SHA256SUMS` | Checksums for the four tutorial files |
 
-Run setup and subsequent chunks in order, or Knit. Keep `ldpred_mode: "prepared"` for the default workflow. To try live fitting, change only that mode to `"fit"`, save, and follow the Rmd's package and rerun instructions. Prepared mode needs neither the LD matrix nor `bigsnpr`/`bigsparser`. Leave `rebuild_ld: false` during class; optional LD construction is retained in the instructor appendix.
+Run the visible **setup** chunk under **Initialize parameters** first in every fresh R session, then subsequent chunks in order, or Knit. YAML alone does not create the R object `params`; setup does. Keep `ldpred_mode: "prepared"` for the default workflow. To try live fitting, change only that mode to `"fit"`, save, and follow the Rmd's package and rerun instructions. Prepared mode needs neither the LD matrix nor `bigsnpr`/`bigsparser`. Leave `rebuild_ld: false` during class; optional LD construction is retained in the instructor appendix.
 
 Raw genotypes/outcomes, installed packages, and generated analysis folders are not included in Git. Results are written to a new subdirectory of `06_PRS_results/` beside your copy of the Rmd.
